@@ -1,0 +1,184 @@
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  RED NECTAR — FIREBASE CLOUD SETUP GUIDE
+  One-time setup. Free forever. 5 minutes.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+WHAT THIS DOES:
+  All business data (sales, expenses, stock, funds) will be saved
+  to Google's cloud. Every phone that opens the app sees the SAME
+  data in real-time. If internet is off, it uses the last known
+  data stored on the device and syncs when back online.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 1 — Create Firebase Project
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Open your browser and go to:
+   https://console.firebase.google.com
+
+2. Sign in with your Google account (Gmail)
+
+3. Click "Create a project"
+
+4. Project name: red-nectar-tracker
+   (or any name you like)
+
+5. Disable Google Analytics when asked → Not needed
+
+6. Click "Create project" → wait ~30 seconds → Continue
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 2 — Create the Database
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. In the left menu, click:  Build → Firestore Database
+
+2. Click "Create database"
+
+3. Choose: "Start in test mode"  ← Important! Click this
+
+4. Click "Next"
+
+5. Select region: asia-south1 (Mumbai — closest to India)
+
+6. Click "Enable" → wait ~20 seconds
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 3 — Get Your App Config Keys
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Click the ⚙️ gear icon (top left, next to "Project Overview")
+   → Project settings
+
+2. Scroll down to "Your apps" section
+
+3. Click the </> icon (Web app)
+
+4. App nickname: red-nectar-web
+
+5. Do NOT check Firebase Hosting
+
+6. Click "Register app"
+
+7. You will see a block of code like this:
+
+   const firebaseConfig = {
+     apiKey: "AIzaSyXXXXXXXXXXXXXXXXXXXX",
+     authDomain: "red-nectar-tracker.firebaseapp.com",
+     projectId: "red-nectar-tracker",
+     storageBucket: "red-nectar-tracker.appspot.com",
+     messagingSenderId: "123456789012",
+     appId: "1:123456789012:web:abcdef123456"
+   };
+
+8. COPY all 6 values (you will need them in Step 5)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 4 — Set Security Rules
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. In Firebase console → Firestore Database → Rules tab
+
+2. Delete everything and paste this:
+
+   rules_version = '2';
+   service cloud.firestore {
+     match /databases/{database}/documents {
+       match /rednectar/{document=**} {
+         allow read, write: if true;
+       }
+     }
+   }
+
+3. Click "Publish"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 5 — Paste Config Into the App
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Open the file:  index.html  in any text editor
+   (Notepad on Windows, TextEdit on Mac)
+
+2. Press Ctrl+F (Find) and search for:
+   YOUR_API_KEY
+
+3. You will see this section near the top:
+
+   const FIREBASE_CONFIG = {
+     apiKey:            "YOUR_API_KEY",
+     authDomain:        "YOUR_PROJECT.firebaseapp.com",
+     projectId:         "YOUR_PROJECT_ID",
+     storageBucket:     "YOUR_PROJECT.appspot.com",
+     messagingSenderId: "YOUR_SENDER_ID",
+     appId:             "YOUR_APP_ID"
+   };
+
+4. Replace each value with your real values from Step 3.
+   Example after editing:
+
+   const FIREBASE_CONFIG = {
+     apiKey:            "AIzaSyXXXXXXXXXXXXXXXXXXXX",
+     authDomain:        "red-nectar-tracker.firebaseapp.com",
+     projectId:         "red-nectar-tracker",
+     storageBucket:     "red-nectar-tracker.appspot.com",
+     messagingSenderId: "123456789012",
+     appId:             "1:123456789012:web:abcdef123456"
+   };
+
+5. Save the file (Ctrl+S)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 6 — Deploy to Netlify
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Go to https://netlify.com → your site dashboard
+
+2. Drag the entire folder (containing index.html, manifest.json,
+   sw.js, icon files) onto the Netlify deploy area
+
+3. Netlify redeploys automatically — same URL, no deletion needed
+
+4. Open the app on your phone → you should see:
+   ☁️ Cloud Sync  in the header bar
+
+   If you see 📴 Offline, check your config values in Step 5.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HOW DATA WORKS NOW
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ☁️  All data saved to Firebase cloud (your Google account)
+  📱  Every phone sees the same data — real-time sync
+  📴  No internet? App uses last saved data on device
+  🔄  Comes back online? Syncs automatically
+  🔒  Data lives in YOUR Firebase project — not shared with anyone
+  💰  Free forever up to 1GB data & 50,000 reads/day (more than enough)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FUTURE UPDATES — DATA IS ALWAYS SAFE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  When you get a new version of the app:
+  1. Open new index.html in text editor
+  2. Find YOUR_API_KEY and replace config (same as Step 5)
+  3. Drag to Netlify → done
+  
+  Your data in Firebase is NEVER touched by app updates.
+  Sales, expenses, stock, funds — all safe always.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FIREBASE FREE PLAN LIMITS (Spark Plan)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Storage:      1 GB total
+  Reads/day:    50,000
+  Writes/day:   20,000
+  Deletes/day:  20,000
+
+  For a small business tracker this is essentially unlimited.
+  You would need to add ~500 records per day every day to
+  approach these limits.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Red Nectar Business Tracker — Cloud Edition v8
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

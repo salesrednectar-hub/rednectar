@@ -1,0 +1,2145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <meta name="theme-color" content="#1e3a8a"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="Red Nectar"/>
+  <meta name="description" content="Red Nectar Business Tracker — Sales, Stock, Expenses & Funds"/>
+  <title>Red Nectar</title>
+  <link rel="manifest" href="manifest.json"/>
+  <link rel="icon" type="image/png" href="icon-192.png"/>
+  <link rel="apple-touch-icon" href="icon-192.png"/>
+
+  <!-- React + Babel -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Firebase SDK v8 (compat — simplest for inline scripts) -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { height: 100%; overflow: hidden; }
+    body { height: 100%; overflow: hidden; background: #f0f4ff; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+    #root { height: 100%; display: flex; flex-direction: column; }
+    * { -webkit-overflow-scrolling: touch; }
+    button { -webkit-tap-highlight-color: transparent; user-select: none; }
+    #splash { position:fixed; inset:0; background:linear-gradient(135deg,#1e3a8a,#2563eb); display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:9999; color:#fff; gap:16px; }
+    #splash .logo { width:100px; height:100px; border-radius:50%; object-fit:cover; }
+    #splash .name { font-size:30px; font-weight:900; letter-spacing:-1px; }
+    #splash .sub  { font-size:13px; opacity:0.7; }
+    #splash .bar  { width:160px; height:4px; background:rgba(255,255,255,0.2); border-radius:4px; overflow:hidden; margin-top:8px; }
+    #splash .fill { height:100%; background:#fff; border-radius:4px; animation:load 1.6s ease forwards; }
+    @keyframes load { from { width:0% } to { width:100% } }
+  </style>
+</head>
+<body>
+  <div id="splash">
+    <img class="logo" src="icon-192.png" alt="Red Nectar"/>
+    <div class="name">Red Nectar</div>
+    <div class="sub">Business Tracker</div>
+    <div class="bar"><div class="fill"></div></div>
+  </div>
+  <div id="root"></div>
+
+  <!-- Firebase init + data layer -->
+  <script>
+// ─── FIREBASE CONFIG PLACEHOLDER ─────────────────────────────────────────────
+// STEP: Replace this entire block with YOUR firebaseConfig from Firebase Console
+const FIREBASE_CONFIG = {
+  apiKey:            "YOUR_API_KEY",
+  authDomain:        "YOUR_PROJECT.firebaseapp.com",
+  projectId:         "YOUR_PROJECT_ID",
+  storageBucket:     "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId:             "YOUR_APP_ID"
+};
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── FIREBASE SDK (loaded via CDN in HTML) ────────────────────────────────────
+// firebase app, firestore loaded as globals from CDN scripts
+
+let db = null;
+let firebaseReady = false;
+
+function initFirebase() {
+  try {
+    if (FIREBASE_CONFIG.apiKey === "YOUR_API_KEY") {
+      console.warn("Firebase not configured — using localStorage only");
+      return false;
+    }
+    firebase.initializeApp(FIREBASE_CONFIG);
+    db = firebase.firestore();
+    // Enable offline persistence
+    db.enablePersistence({ synchronizeTabs: true }).catch(e => {
+      if (e.code === 'failed-precondition') console.warn('Persistence: multiple tabs open');
+      else if (e.code === 'unimplemented') console.warn('Persistence not supported');
+    });
+    firebaseReady = true;
+    console.log("✅ Firebase connected");
+    return true;
+  } catch(e) {
+    console.error("Firebase init failed:", e);
+    return false;
+  }
+}
+
+// ─── COLLECTION NAMES ─────────────────────────────────────────────────────────
+const COL = {
+  sales:    "rednectar/data/sales",
+  expenses: "rednectar/data/expenses",
+  stocks:   "rednectar/data/stocks",
+  movements:"rednectar/data/stockMovements",
+  funds:    "rednectar/data/funds",
+};
+
+// ─── LOCAL STORAGE FALLBACK ───────────────────────────────────────────────────
+const LS_KEYS = {
+  sales:    "rn_sales",
+  expenses: "rn_expenses",
+  stocks:   "rn_stocks",
+  movements:"rn_movements",
+  funds:    "rn_funds",
+};
+
+function lsGet(key) {
+  try { return JSON.parse(localStorage.getItem(key) || "[]"); } catch { return []; }
+}
+function lsSet(key, data) {
+  try { localStorage.setItem(key, JSON.stringify(data)); } catch(e) { console.warn("LS write failed", e); }
+}
+
+
+    // Initialize Firebase on page load
+    initFirebase();
+  </script>
+
+  <!-- React App -->
+  <script type="text/babel">
+    const { useState, useRef, useEffect } = React;
+
+
+// ─── AUTH CONFIG ───────────────────────────────────────────────────────────────
+const USERS = [
+  { username: "RedNectar", password: "RedNectar2024", role: "admin",  display: "Admin"    },
+  { username: "Punith",    password: "Nectar2024",    role: "member", display: "Punith"   },
+  { username: "Damini",    password: "Nectar2024",    role: "member", display: "Damini"   },
+  { username: "Santhosh",  password: "Nectar2024",    role: "member", display: "Santhosh" },
+];
+
+const EXPENSE_CATEGORIES = ["Purchase","Salary","Rent","Electrical Bill","Miscellaneous"];
+const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const UNITS  = ["Pcs","Kg","Litres","Box","Dozen","Pack","Set","Other"];
+
+const formatCurrency = (val) =>
+  new Intl.NumberFormat("en-IN", { style:"currency", currency:"INR", minimumFractionDigits:2 }).format(val || 0);
+
+const today = () => new Date().toISOString().split("T")[0];
+const fmtDate = (d) => new Date(d).toLocaleDateString("en-IN", { day:"2-digit", month:"short", year:"numeric" });
+
+// ─── DOWNLOAD HELPERS ──────────────────────────────────────────────────────────
+// Excel download (CSV that Excel opens natively)
+function downloadExcel(stocks) {
+  const headers = ["Item Name","Category","Quantity","Unit","Cost Price (₹)","Selling Price (₹)","Stock Value (₹)","Low Alert","Date Added","Notes","Status"];
+  const rows = stocks.map(s => [
+    s.name, s.category||"", s.quantity, s.unit,
+    s.costPrice, s.sellingPrice,
+    (s.quantity * s.costPrice).toFixed(2),
+    s.lowAlert||5, s.dateAdded, s.notes||"",
+    Number(s.quantity) <= Number(s.lowAlert||5) ? "LOW STOCK" : "OK"
+  ]);
+  const totalValue = stocks.reduce((a,s) => a + s.quantity*s.costPrice, 0);
+  rows.push([]);
+  rows.push(["TOTAL STOCK VALUE","","","","","",totalValue.toFixed(2)]);
+
+  const csvContent = [headers, ...rows]
+    .map(row => row.map(cell => `"${String(cell).replace(/"/g,'""')}"`).join(","))
+    .join("\n");
+
+  const BOM = "\uFEFF";
+  const blob = new Blob([BOM + csvContent], { type:"text/csv;charset=utf-8;" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href = url; a.download = `RedNectar_StockReport_${today()}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+}
+
+// PDF download using print-to-PDF
+function downloadPDF(stocks, stockMovements) {
+  const totalValue   = stocks.reduce((a,s) => a + s.quantity*s.costPrice, 0);
+  const lowItems     = stocks.filter(s => Number(s.quantity) <= Number(s.lowAlert||5));
+  const totalSellVal = stocks.reduce((a,s) => a + s.quantity*s.sellingPrice, 0);
+
+  const rows = stocks.map(s => {
+    const isLow = Number(s.quantity) <= Number(s.lowAlert||5);
+    const moves = stockMovements.filter(m => m.stockId === s.id);
+    const totalOut = moves.filter(m=>m.type==="out").reduce((a,m)=>a+m.qty,0);
+    const totalIn  = moves.filter(m=>m.type==="in").reduce((a,m)=>a+m.qty,0);
+    return `
+      <tr style="background:${isLow?'#fff5f5':'#fff'}">
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;font-weight:600">${s.name}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;color:#6b7280">${s.category||'—'}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:center;font-weight:700;color:${isLow?'#b91c1c':'#1d7e4a'}">${s.quantity} ${s.unit}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:center;color:#1d7e4a">+${totalIn}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:center;color:#b91c1c">-${totalOut}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right">₹${s.costPrice.toLocaleString('en-IN')}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:right">₹${(s.quantity*s.costPrice).toLocaleString('en-IN')}</td>
+        <td style="padding:8px;border-bottom:1px solid #e5e7eb;text-align:center">
+          <span style="background:${isLow?'#fee2e2':'#dcfce7'};color:${isLow?'#b91c1c':'#166534'};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700">${isLow?'⚠ LOW':'✓ OK'}</span>
+        </td>
+      </tr>`;
+  }).join("");
+
+  const movRows = stockMovements.slice(0,50).map(m => {
+    const stock = stocks.find(s=>s.id===m.stockId);
+    return `<tr>
+      <td style="padding:6px;border-bottom:1px solid #f3f4f6;font-size:12px">${fmtDate(m.date)}</td>
+      <td style="padding:6px;border-bottom:1px solid #f3f4f6;font-size:12px;font-weight:600">${stock?.name||'—'}</td>
+      <td style="padding:6px;border-bottom:1px solid #f3f4f6;font-size:12px;text-align:center">
+        <span style="color:${m.type==='in'?'#1d7e4a':'#b91c1c'};font-weight:700">${m.type==='in'?'📦 IN':'🛒 OUT'}</span>
+      </td>
+      <td style="padding:6px;border-bottom:1px solid #f3f4f6;font-size:12px;text-align:center;font-weight:700;color:${m.type==='in'?'#1d7e4a':'#b91c1c'}">${m.type==='in'?'+':'-'}${m.qty}</td>
+      <td style="padding:6px;border-bottom:1px solid #f3f4f6;font-size:12px;color:#6b7280">${m.note||'—'}</td>
+    </tr>`;
+  }).join("");
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <title>Red Nectar Stock Report</title>
+  <style>
+    body{font-family:'Segoe UI',sans-serif;color:#111827;margin:0;padding:20px}
+    @media print{body{padding:0}}
+    .header{background:linear-gradient(135deg,#1e3a8a,#2563eb);color:#fff;padding:20px 24px;border-radius:12px;margin-bottom:20px}
+    .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+    .kpi{background:#f8fafc;border-radius:10px;padding:14px;text-align:center;border:1px solid #e5e7eb}
+    .kpi-val{font-size:18px;font-weight:800;color:#1e40af}
+    .kpi-label{font-size:11px;color:#6b7280;margin-top:4px}
+    table{width:100%;border-collapse:collapse;margin-bottom:20px}
+    th{background:#1e3a8a;color:#fff;padding:10px 8px;text-align:left;font-size:12px}
+    h2{font-size:15px;color:#1e3a8a;margin:16px 0 8px;border-bottom:2px solid #eff6ff;padding-bottom:6px}
+    .footer{text-align:center;color:#9ca3af;font-size:11px;margin-top:20px}
+    .low-alert{background:#fff5f5;border:1px solid #fecaca;border-radius:8px;padding:12px;margin-bottom:16px}
+  </style></head><body>
+  <div class="header">
+    <div style="font-size:22px;font-weight:900">🔴 Red Nectar — Stock Report</div>
+    <div style="font-size:12px;margin-top:4px;opacity:0.8">Generated: ${new Date().toLocaleString('en-IN')} &nbsp;|&nbsp; Total Items: ${stocks.length}</div>
+  </div>
+
+  <div class="kpi-grid">
+    <div class="kpi"><div class="kpi-val">${stocks.length}</div><div class="kpi-label">Total Items</div></div>
+    <div class="kpi"><div class="kpi-val" style="color:#1d7e4a">₹${totalValue.toLocaleString('en-IN')}</div><div class="kpi-label">Stock Value (Cost)</div></div>
+    <div class="kpi"><div class="kpi-val" style="color:#7c3aed">₹${totalSellVal.toLocaleString('en-IN')}</div><div class="kpi-label">Stock Value (Sell)</div></div>
+    <div class="kpi"><div class="kpi-val" style="color:${lowItems.length>0?'#b91c1c':'#1d7e4a'}">${lowItems.length}</div><div class="kpi-label">Low Stock Items</div></div>
+  </div>
+
+  ${lowItems.length > 0 ? `<div class="low-alert"><strong style="color:#b91c1c">⚠ Low Stock Alert:</strong> ${lowItems.map(s=>`${s.name} (${s.quantity} ${s.unit})`).join(', ')}</div>` : ''}
+
+  <h2>📦 Stock Inventory</h2>
+  <table>
+    <thead><tr>
+      <th>Item Name</th><th>Category</th><th>Qty</th><th>IN</th><th>OUT</th><th>Cost Price</th><th>Stock Value</th><th>Status</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+
+  ${stockMovements.length > 0 ? `
+  <h2>🔄 Stock Movement History (Last 50)</h2>
+  <table>
+    <thead><tr><th>Date</th><th>Item</th><th>Type</th><th>Qty</th><th>Note</th></tr></thead>
+    <tbody>${movRows}</tbody>
+  </table>` : ''}
+
+  <div class="footer">Red Nectar Business Tracker &nbsp;|&nbsp; Confidential &nbsp;|&nbsp; ${today()}</div>
+  <script>window.onload=()=>{window.print()}<\/script>
+  </body></html>`;
+
+  const w = window.open("","_blank","width=900,height=700");
+  w.document.write(html);
+  w.document.close();
+}
+
+// Excel download for Monthly report
+function downloadMonthlyExcel(mSales, mExpenses, mExpByCat, monthLabel) {
+  const mTotal  = mSales.reduce((a,b)=>a+b.amount,0);
+  const mExp    = mExpenses.reduce((a,b)=>a+b.amount,0);
+  const mProfit = mTotal - mExp;
+  const mPaid   = mSales.filter(s=>s.paymentStatus==="Paid").reduce((a,b)=>a+b.amount,0);
+  const mUnpaid = mSales.filter(s=>s.paymentStatus!=="Paid").reduce((a,b)=>a+b.amount,0);
+  const margin  = mTotal>0?((mProfit/mTotal)*100).toFixed(1):0;
+
+  const BOM = "\uFEFF";
+  const toCSV = rows => rows.map(r=>r.map(c=>`"${String(c??'').replace(/"/g,'""')}"`).join(",")).join("\n");
+
+  const data = [
+    [`RED NECTAR — MONTHLY REPORT: ${monthLabel}`, `Generated: ${new Date().toLocaleString("en-IN")}`],
+    [],
+    ["=== SUMMARY ==="],
+    ["Metric","Amount"],
+    ["Total Revenue", mTotal],
+    ["  Collected (Paid)", mPaid],
+    ["  Pending (Not Paid)", mUnpaid],
+    ["Total Expenses", mExp],
+    ["Net Profit / Loss", mProfit],
+    ["Profit Margin (%)", margin],
+    ["Sales Count", mSales.length],
+    ["Expense Count", mExpenses.length],
+    [],
+    ["=== EXPENSE BY CATEGORY ==="],
+    ["Category","Amount (₹)"],
+    ...mExpByCat.map(({cat,total})=>[cat, total]),
+    [],
+    ["=== SALES TRANSACTIONS ==="],
+    ["Date","Purchaser","Mobile","Description","Amount (₹)","Payment Status"],
+    ...mSales.map(s=>[s.date, s.purchaser||"—", s.mobile||"—", s.description||"Sale", s.amount, s.paymentStatus]),
+    [],
+    ["=== EXPENSE TRANSACTIONS ==="],
+    ["Date","Category","Description","Amount (₹)"],
+    ...mExpenses.map(e=>[e.date, e.category, e.description||"—", e.amount]),
+  ];
+
+  const blob = new Blob([BOM + toCSV(data)], {type:"text/csv;charset=utf-8;"});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href=url; a.download=`RedNectar_${monthLabel.replace(" ","_")}_Report.csv`;
+  a.click(); URL.revokeObjectURL(url);
+}
+
+// PDF download for Monthly report
+function downloadMonthlyPDF(mSales, mExpenses, mExpByCat, monthLabel) {
+  const mTotal  = mSales.reduce((a,b)=>a+b.amount,0);
+  const mExp    = mExpenses.reduce((a,b)=>a+b.amount,0);
+  const mProfit = mTotal - mExp;
+  const mPaid   = mSales.filter(s=>s.paymentStatus==="Paid").reduce((a,b)=>a+b.amount,0);
+  const mUnpaid = mSales.filter(s=>s.paymentStatus!=="Paid").reduce((a,b)=>a+b.amount,0);
+  const margin  = mTotal>0?((mProfit/mTotal)*100).toFixed(1):0;
+
+  const salesRows = mSales.map(s=>`
+    <tr>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px">${s.date}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;font-weight:600">${s.purchaser||"—"}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;color:#6b7280">${s.mobile||"—"}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;color:#6b7280">${s.description||"Sale"}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;text-align:right;font-weight:700;color:#1d7e4a">₹${Number(s.amount).toLocaleString("en-IN")}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;text-align:center">
+        <span style="background:${s.paymentStatus==='Paid'?'#dcfce7':'#fee2e2'};color:${s.paymentStatus==='Paid'?'#166534':'#b91c1c'};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700">${s.paymentStatus}</span>
+      </td>
+    </tr>`).join("");
+
+  const expRows = mExpenses.map(e=>`
+    <tr>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px">${e.date}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;font-weight:600">${e.category}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;color:#6b7280">${e.description||"—"}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;text-align:right;font-weight:700;color:#b91c1c">₹${Number(e.amount).toLocaleString("en-IN")}</td>
+    </tr>`).join("");
+
+  const catRows = mExpByCat.filter(x=>x.total>0).map(({cat,total})=>`
+    <tr>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px">${cat}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;text-align:right;font-weight:700;color:#b91c1c">₹${total.toLocaleString("en-IN")}</td>
+    </tr>`).join("");
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <title>Red Nectar — ${monthLabel} Report</title>
+  <style>
+    body{font-family:'Segoe UI',sans-serif;color:#111827;margin:0;padding:20px}
+    @media print{body{padding:0}}
+    .header{background:linear-gradient(135deg,#1e3a8a,#2563eb);color:#fff;padding:20px 24px;border-radius:12px;margin-bottom:20px}
+    .kpi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px}
+    .kpi{background:#f8fafc;border-radius:10px;padding:14px;text-align:center;border:1px solid #e5e7eb}
+    .kpi-val{font-size:18px;font-weight:800}
+    .kpi-label{font-size:11px;color:#6b7280;margin-top:4px}
+    .kpi-sub{font-size:11px;margin-top:6px;color:#6b7280}
+    table{width:100%;border-collapse:collapse;margin-bottom:24px}
+    th{background:#1e3a8a;color:#fff;padding:9px 8px;text-align:left;font-size:12px}
+    h2{font-size:15px;color:#1e3a8a;margin:20px 0 8px;border-bottom:2px solid #eff6ff;padding-bottom:6px}
+    .footer{text-align:center;color:#9ca3af;font-size:11px;margin-top:20px;border-top:1px solid #e5e7eb;padding-top:12px}
+  </style></head><body>
+  <div class="header">
+    <div style="font-size:22px;font-weight:900">🔴 Red Nectar — ${monthLabel} Report</div>
+    <div style="font-size:12px;margin-top:4px;opacity:0.8">Generated: ${new Date().toLocaleString("en-IN")}</div>
+  </div>
+  <div class="kpi-grid">
+    <div class="kpi">
+      <div class="kpi-val" style="color:#1d7e4a">₹${mTotal.toLocaleString("en-IN")}</div>
+      <div class="kpi-label">Total Revenue</div>
+      <div class="kpi-sub">Paid: ₹${mPaid.toLocaleString("en-IN")} | Pending: ₹${mUnpaid.toLocaleString("en-IN")}</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-val" style="color:#b91c1c">₹${mExp.toLocaleString("en-IN")}</div>
+      <div class="kpi-label">Total Expenses</div>
+      <div class="kpi-sub">${mExpenses.length} transactions</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-val" style="color:${mProfit>=0?'#1d7e4a':'#b91c1c'}">₹${Math.abs(mProfit).toLocaleString("en-IN")}</div>
+      <div class="kpi-label">Net ${mProfit>=0?'Profit':'Loss'}</div>
+      <div class="kpi-sub">Margin: ${margin}%</div>
+    </div>
+  </div>
+  <h2>💰 Sales — ${monthLabel} (${mSales.length})</h2>
+  <table>
+    <thead><tr><th>Date</th><th>Purchaser</th><th>Mobile</th><th>Description</th><th>Amount</th><th>Status</th></tr></thead>
+    <tbody>${salesRows||'<tr><td colspan="6" style="text-align:center;padding:16px;color:#9ca3af">No sales this month</td></tr>'}</tbody>
+  </table>
+  <h2>📋 Expenses — ${monthLabel} (${mExpenses.length})</h2>
+  <table>
+    <thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th></tr></thead>
+    <tbody>${expRows||'<tr><td colspan="4" style="text-align:center;padding:16px;color:#9ca3af">No expenses this month</td></tr>'}</tbody>
+  </table>
+  <h2>📊 Expenses by Category</h2>
+  <table>
+    <thead><tr><th>Category</th><th>Total Amount</th></tr></thead>
+    <tbody>${catRows||'<tr><td colspan="2" style="text-align:center;padding:16px;color:#9ca3af">No data</td></tr>'}</tbody>
+  </table>
+  <div class="footer">Red Nectar Business Tracker &nbsp;|&nbsp; Confidential &nbsp;|&nbsp; ${monthLabel} &nbsp;|&nbsp; ${today()}</div>
+  <script>window.onload=()=>{window.print()}<\/script>
+  </body></html>`;
+
+  const w = window.open("","_blank","width=900,height=700");
+  w.document.write(html); w.document.close();
+}
+
+// Excel download for Sales & Expenses report
+function downloadReportExcel(sales, expenses, expenseByCategory) {
+  const totalSales    = sales.reduce((a,b)=>a+b.amount,0);
+  const totalExpenses = expenses.reduce((a,b)=>a+b.amount,0);
+  const netProfit     = totalSales - totalExpenses;
+  const paidSales     = sales.filter(s=>s.paymentStatus==="Paid").reduce((a,b)=>a+b.amount,0);
+  const unpaidSales   = sales.filter(s=>s.paymentStatus!=="Paid").reduce((a,b)=>a+b.amount,0);
+  const profitMargin  = totalSales>0?((netProfit/totalSales)*100).toFixed(1):0;
+
+  const BOM = "\uFEFF";
+  const toCSV = rows => rows.map(r=>r.map(c=>`"${String(c??'').replace(/"/g,'""')}"`).join(",")).join("\n");
+
+  const summary = [
+    ["RED NECTAR — FINANCIAL REPORT", `Generated: ${new Date().toLocaleString("en-IN")}`],
+    [],
+    ["=== FINANCIAL SUMMARY ==="],
+    ["Metric","Amount"],
+    ["Total Revenue", totalSales],
+    ["  Collected (Paid)", paidSales],
+    ["  Pending (Not Paid)", unpaidSales],
+    ["Total Expenses", totalExpenses],
+    ["Net Profit / Loss", netProfit],
+    ["Profit Margin (%)", profitMargin],
+    [],
+    ["=== EXPENSE BY CATEGORY ==="],
+    ["Category","Amount (₹)"],
+    ...expenseByCategory.map(({cat,total})=>[cat, total]),
+    [],
+    ["=== SALES TRANSACTIONS ==="],
+    ["Date","Purchaser","Description","Amount (₹)","Payment Status"],
+    ...sales.map(s=>[s.date, s.purchaser||"—", s.description||"Sale", s.amount, s.paymentStatus]),
+    [],
+    ["=== EXPENSE TRANSACTIONS ==="],
+    ["Date","Category","Description","Amount (₹)"],
+    ...expenses.map(e=>[e.date, e.category, e.description||"—", e.amount]),
+  ];
+
+  const blob = new Blob([BOM + toCSV(summary)], {type:"text/csv;charset=utf-8;"});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href=url; a.download=`RedNectar_FinancialReport_${today()}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+}
+
+// PDF download for Sales & Expenses report
+function downloadReportPDF(sales, expenses, expenseByCategory) {
+  const totalSales    = sales.reduce((a,b)=>a+b.amount,0);
+  const totalExpenses = expenses.reduce((a,b)=>a+b.amount,0);
+  const netProfit     = totalSales - totalExpenses;
+  const paidSales     = sales.filter(s=>s.paymentStatus==="Paid").reduce((a,b)=>a+b.amount,0);
+  const unpaidSales   = sales.filter(s=>s.paymentStatus!=="Paid").reduce((a,b)=>a+b.amount,0);
+  const profitMargin  = totalSales>0?((netProfit/totalSales)*100).toFixed(1):0;
+
+  const salesRows = sales.map(s=>`
+    <tr>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px">${s.date}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;font-weight:600">${s.purchaser||"—"}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;color:#6b7280">${s.description||"Sale"}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;text-align:right;font-weight:700;color:#1d7e4a">₹${Number(s.amount).toLocaleString("en-IN")}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;text-align:center">
+        <span style="background:${s.paymentStatus==='Paid'?'#dcfce7':'#fee2e2'};color:${s.paymentStatus==='Paid'?'#166534':'#b91c1c'};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700">${s.paymentStatus}</span>
+      </td>
+    </tr>`).join("");
+
+  const expRows = expenses.map(e=>`
+    <tr>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px">${e.date}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;font-weight:600">${e.category}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;color:#6b7280">${e.description||"—"}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;text-align:right;font-weight:700;color:#b91c1c">₹${Number(e.amount).toLocaleString("en-IN")}</td>
+    </tr>`).join("");
+
+  const catRows = expenseByCategory.filter(x=>x.total>0).map(({cat,total})=>`
+    <tr>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px">${cat}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;text-align:right;font-weight:700;color:#b91c1c">₹${total.toLocaleString("en-IN")}</td>
+    </tr>`).join("");
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <title>Red Nectar Financial Report</title>
+  <style>
+    body{font-family:'Segoe UI',sans-serif;color:#111827;margin:0;padding:20px}
+    @media print{body{padding:0}}
+    .header{background:linear-gradient(135deg,#1e3a8a,#2563eb);color:#fff;padding:20px 24px;border-radius:12px;margin-bottom:20px}
+    .kpi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px}
+    .kpi{background:#f8fafc;border-radius:10px;padding:14px;text-align:center;border:1px solid #e5e7eb}
+    .kpi-val{font-size:18px;font-weight:800}
+    .kpi-label{font-size:11px;color:#6b7280;margin-top:4px}
+    .kpi-sub{font-size:11px;margin-top:6px;color:#6b7280}
+    table{width:100%;border-collapse:collapse;margin-bottom:24px}
+    th{background:#1e3a8a;color:#fff;padding:9px 8px;text-align:left;font-size:12px}
+    h2{font-size:15px;color:#1e3a8a;margin:20px 0 8px;border-bottom:2px solid #eff6ff;padding-bottom:6px}
+    .footer{text-align:center;color:#9ca3af;font-size:11px;margin-top:20px;border-top:1px solid #e5e7eb;padding-top:12px}
+    .profit-box{padding:14px 20px;border-radius:10px;text-align:center;margin-bottom:20px;background:${netProfit>=0?'#f0fdf4':'#fff5f5'};border:2px solid ${netProfit>=0?'#bbf7d0':'#fecaca'}}
+  </style></head><body>
+  <div class="header">
+    <div style="font-size:22px;font-weight:900">🔴 Red Nectar — Financial Report</div>
+    <div style="font-size:12px;margin-top:4px;opacity:0.8">Generated: ${new Date().toLocaleString("en-IN")}</div>
+  </div>
+
+  <div class="kpi-grid">
+    <div class="kpi">
+      <div class="kpi-val" style="color:#1d7e4a">₹${totalSales.toLocaleString("en-IN")}</div>
+      <div class="kpi-label">Total Revenue</div>
+      <div class="kpi-sub">Paid: ₹${paidSales.toLocaleString("en-IN")} | Pending: ₹${unpaidSales.toLocaleString("en-IN")}</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-val" style="color:#b91c1c">₹${totalExpenses.toLocaleString("en-IN")}</div>
+      <div class="kpi-label">Total Expenses</div>
+      <div class="kpi-sub">${expenses.length} transactions</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-val" style="color:${netProfit>=0?'#1d7e4a':'#b91c1c'}">₹${Math.abs(netProfit).toLocaleString("en-IN")}</div>
+      <div class="kpi-label">Net ${netProfit>=0?'Profit':'Loss'}</div>
+      <div class="kpi-sub">Margin: ${profitMargin}%</div>
+    </div>
+  </div>
+
+  <h2>💰 Sales Transactions (${sales.length})</h2>
+  <table>
+    <thead><tr><th>Date</th><th>Purchaser</th><th>Description</th><th>Amount</th><th>Status</th></tr></thead>
+    <tbody>${salesRows||'<tr><td colspan="5" style="text-align:center;padding:16px;color:#9ca3af">No sales recorded</td></tr>'}</tbody>
+  </table>
+
+  <h2>📋 Expense Transactions (${expenses.length})</h2>
+  <table>
+    <thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th></tr></thead>
+    <tbody>${expRows||'<tr><td colspan="4" style="text-align:center;padding:16px;color:#9ca3af">No expenses recorded</td></tr>'}</tbody>
+  </table>
+
+  <h2>📊 Expenses by Category</h2>
+  <table>
+    <thead><tr><th>Category</th><th>Total Amount</th></tr></thead>
+    <tbody>${catRows||'<tr><td colspan="2" style="text-align:center;padding:16px;color:#9ca3af">No data</td></tr>'}</tbody>
+  </table>
+
+  <div class="footer">Red Nectar Business Tracker &nbsp;|&nbsp; Confidential &nbsp;|&nbsp; ${today()}</div>
+  <script>window.onload=()=>{window.print()}<\/script>
+  </body></html>`;
+
+  const w = window.open("","_blank","width=900,height=700");
+  w.document.write(html); w.document.close();
+}
+
+// ─── DAILY BACKUP EXPORT + WHATSAPP SHARE ─────────────────────────────────────
+function exportDailyCSV(sales, expenses, stocks, stockMovements, funds) {
+  const d = today();
+  const BOM = "\uFEFF";
+  const toCSV = rows => rows.map(r => r.map(c => `"${String(c??'').replace(/"/g,'""')}"`).join(",")).join("\n");
+
+  const totalSales    = sales.reduce((a,b)=>a+b.amount,0);
+  const totalExpenses = expenses.reduce((a,b)=>a+b.amount,0);
+  const totalFunds    = funds.reduce((a,f)=>a+Number(f.amount),0);
+  const netProfit     = totalSales - totalExpenses;
+  const balance       = totalFunds + netProfit;
+
+  const data = [
+    [`RED NECTAR — DAILY BACKUP REPORT`,`Date: ${d}`],
+    [],
+    ["=== FUNDS SUMMARY ==="],
+    ["Total Funds IN", totalFunds],["Sales Revenue", totalSales],
+    ["Total Expenses", totalExpenses],["Net Profit", netProfit],["Current Balance", balance],
+    [],
+    ["=== FUND ENTRIES ==="],
+    ["Date","Type","Source","Amount (₹)","Note"],
+    ...funds.map(f=>[f.date,f.type,f.source||"",f.amount,f.note||""]),
+    [],
+    ["=== SALES ==="],
+    ["Date","Purchaser","Mobile","Description","Amount (₹)","Status","Stock Item","Qty"],
+    ...sales.map(s=>[s.date,s.purchaser||"",s.mobile||"",s.description||"",s.amount,s.paymentStatus,
+      stocks.find(x=>x.id===s.stockId)?.name||"",s.stockQty||""]),
+    [],
+    ["=== EXPENSES ==="],
+    ["Date","Category","Description","Amount (₹)"],
+    ...expenses.map(e=>[e.date,e.category,e.description||"",e.amount]),
+    [],
+    ["=== STOCK INVENTORY ==="],
+    ["Item","Category","Qty","Unit","Cost (₹)","Sell (₹)","Stock Value (₹)","Status"],
+    ...stocks.map(s=>[s.name,s.category||"",s.quantity,s.unit,s.costPrice,s.sellingPrice,
+      (s.quantity*s.costPrice).toFixed(2),
+      Number(s.quantity)<=Number(s.lowAlert||5)?"LOW STOCK":"OK"]),
+    [],
+    ["=== STOCK MOVEMENTS ==="],
+    ["Date","Item","Type","Qty","Note"],
+    ...stockMovements.map(m=>[m.date,stocks.find(x=>x.id===m.stockId)?.name||"",m.type,m.qty,m.note||""]),
+  ];
+
+  const blob = new Blob([BOM + toCSV(data)], {type:"text/csv;charset=utf-8;"});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href=url; a.download=`RedNectar_DailyBackup_${d}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+}
+
+function exportDailyPDF(sales, expenses, stocks, stockMovements, funds) {
+  const d = today();
+  const totalSales    = sales.reduce((a,b)=>a+b.amount,0);
+  const totalExpenses = expenses.reduce((a,b)=>a+b.amount,0);
+  const totalFunds    = funds.reduce((a,f)=>a+Number(f.amount),0);
+  const netProfit     = totalSales - totalExpenses;
+  const balance       = totalFunds + netProfit;
+  const paidSales     = sales.filter(s=>s.paymentStatus==="Paid").reduce((a,b)=>a+b.amount,0);
+  const unpaidSales   = sales.filter(s=>s.paymentStatus!=="Paid").reduce((a,b)=>a+b.amount,0);
+  const lowItems      = stocks.filter(s=>Number(s.quantity)<=Number(s.lowAlert||5));
+
+  const salesRows = sales.map(s=>`<tr>
+    <td>${s.date}</td><td>${s.purchaser||"—"}</td><td>${s.mobile||"—"}</td>
+    <td>${s.description||"Sale"}</td>
+    <td style="text-align:right;color:#1d7e4a;font-weight:700">₹${s.amount.toLocaleString("en-IN")}</td>
+    <td><span style="background:${s.paymentStatus==='Paid'?'#dcfce7':'#fee2e2'};color:${s.paymentStatus==='Paid'?'#166534':'#b91c1c'};padding:2px 8px;border-radius:8px;font-size:11px;font-weight:700">${s.paymentStatus}</span></td>
+  </tr>`).join("");
+
+  const expRows = expenses.map(e=>`<tr>
+    <td>${e.date}</td><td>${e.category}</td><td>${e.description||"—"}</td>
+    <td style="text-align:right;color:#b91c1c;font-weight:700">₹${e.amount.toLocaleString("en-IN")}</td>
+  </tr>`).join("");
+
+  const stockRows = stocks.map(s=>{
+    const isLow = Number(s.quantity)<=Number(s.lowAlert||5);
+    const moves = stockMovements.filter(m=>m.stockId===s.id);
+    const totIn  = moves.filter(m=>m.type==="in").reduce((a,m)=>a+m.qty,0);
+    const totOut = moves.filter(m=>m.type==="out").reduce((a,m)=>a+m.qty,0);
+    return `<tr style="background:${isLow?'#fff5f5':'#fff'}">
+      <td style="font-weight:600">${s.name}</td><td>${s.category||"—"}</td>
+      <td style="text-align:center;font-weight:800;color:${isLow?'#b91c1c':'#1d7e4a'}">${s.quantity} ${s.unit}</td>
+      <td style="text-align:center;color:#1d7e4a">+${totIn}</td>
+      <td style="text-align:center;color:#b91c1c">-${totOut}</td>
+      <td style="text-align:right">₹${s.costPrice.toLocaleString("en-IN")}</td>
+      <td style="text-align:right">₹${(s.quantity*s.costPrice).toLocaleString("en-IN")}</td>
+      <td style="text-align:center"><span style="background:${isLow?'#fee2e2':'#dcfce7'};color:${isLow?'#b91c1c':'#166534'};padding:2px 8px;border-radius:8px;font-size:11px;font-weight:700">${isLow?'⚠ LOW':'✓ OK'}</span></td>
+    </tr>`;}).join("");
+
+  const fundRows = funds.map(f=>`<tr>
+    <td>${f.date}</td><td>${f.type}</td><td>${f.source||"—"}</td>
+    <td style="text-align:right;font-weight:700;color:#7c3aed">₹${Number(f.amount).toLocaleString("en-IN")}</td>
+    <td>${f.note||"—"}</td>
+  </tr>`).join("");
+
+  const html=`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Red Nectar Daily Report — ${d}</title>
+  <style>
+    *{box-sizing:border-box}body{font-family:'Segoe UI',sans-serif;margin:0;padding:20px;color:#111827;font-size:13px}
+    @media print{body{padding:0}.no-print{display:none}}
+    .header{background:linear-gradient(135deg,#1e3a8a,#2563eb);color:#fff;padding:20px 24px;border-radius:12px;margin-bottom:16px}
+    .kpi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}
+    .kpi{background:#f8fafc;border-radius:10px;padding:12px;text-align:center;border:1px solid #e5e7eb}
+    .kpi-val{font-size:16px;font-weight:800}.kpi-label{font-size:11px;color:#6b7280;margin-top:3px}
+    table{width:100%;border-collapse:collapse;margin-bottom:20px;font-size:12px}
+    th{background:#1e3a8a;color:#fff;padding:8px;text-align:left}
+    td{padding:7px 8px;border-bottom:1px solid #f3f4f6}
+    h2{font-size:14px;color:#1e3a8a;margin:18px 0 8px;border-bottom:2px solid #eff6ff;padding-bottom:5px}
+    .alert{background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px}
+    .footer{text-align:center;color:#9ca3af;font-size:11px;margin-top:20px;border-top:1px solid #e5e7eb;padding-top:10px}
+    .balance-box{background:linear-gradient(135deg,#1e3a8a,#1e40af);color:#fff;border-radius:10px;padding:16px;margin-bottom:16px;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .bal-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.15);font-size:12px}
+  </style></head><body>
+  <div class="header">
+    <div style="font-size:20px;font-weight:900">🔴 Red Nectar — Daily Backup Report</div>
+    <div style="font-size:12px;margin-top:4px;opacity:0.8">Date: ${d} &nbsp;|&nbsp; Generated: ${new Date().toLocaleString("en-IN")}</div>
+  </div>
+
+  <div class="kpi-grid">
+    <div class="kpi"><div class="kpi-val" style="color:#7c3aed">₹${totalFunds.toLocaleString("en-IN")}</div><div class="kpi-label">Total Funds IN</div></div>
+    <div class="kpi"><div class="kpi-val" style="color:#1d7e4a">₹${totalSales.toLocaleString("en-IN")}</div><div class="kpi-label">Total Revenue</div></div>
+    <div class="kpi"><div class="kpi-val" style="color:#b91c1c">₹${totalExpenses.toLocaleString("en-IN")}</div><div class="kpi-label">Total Expenses</div></div>
+    <div class="kpi"><div class="kpi-val" style="color:${netProfit>=0?'#1d7e4a':'#b91c1c'}">₹${Math.abs(netProfit).toLocaleString("en-IN")}</div><div class="kpi-label">Net ${netProfit>=0?'Profit':'Loss'}</div></div>
+    <div class="kpi"><div class="kpi-val" style="color:#1d7e4a">₹${paidSales.toLocaleString("en-IN")}</div><div class="kpi-label">Collected</div></div>
+    <div class="kpi"><div class="kpi-val" style="color:#dc2626">₹${unpaidSales.toLocaleString("en-IN")}</div><div class="kpi-label">Pending</div></div>
+  </div>
+
+  <div class="balance-box" style="grid-template-columns:1fr">
+    <div class="bal-row"><span>Funds IN + Revenue</span><span style="font-weight:800">₹${(totalFunds+totalSales).toLocaleString("en-IN")}</span></div>
+    <div class="bal-row"><span>Total Expenses</span><span style="font-weight:800;color:#fca5a5">-₹${totalExpenses.toLocaleString("en-IN")}</span></div>
+    <div style="display:flex;justify-content:space-between;padding-top:8px;font-size:15px;font-weight:900">
+      <span>Current Balance</span>
+      <span style="color:${balance>=0?'#86efac':'#fca5a5'}">${balance>=0?'▲':'▼'} ₹${Math.abs(balance).toLocaleString("en-IN")}</span>
+    </div>
+  </div>
+
+  ${lowItems.length>0?`<div class="alert">⚠ <strong>Low Stock:</strong> ${lowItems.map(s=>`${s.name} (${s.quantity} ${s.unit})`).join(", ")}</div>`:""}
+
+  <h2>🏦 Fund Entries (${funds.length})</h2>
+  <table><thead><tr><th>Date</th><th>Type</th><th>Source</th><th>Amount</th><th>Note</th></tr></thead>
+  <tbody>${fundRows||'<tr><td colspan="5" style="text-align:center;color:#9ca3af">No fund entries</td></tr>'}</tbody></table>
+
+  <h2>💰 Sales (${sales.length})</h2>
+  <table><thead><tr><th>Date</th><th>Purchaser</th><th>Mobile</th><th>Description</th><th>Amount</th><th>Status</th></tr></thead>
+  <tbody>${salesRows||'<tr><td colspan="6" style="text-align:center;color:#9ca3af">No sales</td></tr>'}</tbody></table>
+
+  <h2>📤 Expenses (${expenses.length})</h2>
+  <table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th></tr></thead>
+  <tbody>${expRows||'<tr><td colspan="4" style="text-align:center;color:#9ca3af">No expenses</td></tr>'}</tbody></table>
+
+  <h2>📦 Stock Inventory (${stocks.length})</h2>
+  <table><thead><tr><th>Item</th><th>Category</th><th>Qty</th><th>IN</th><th>OUT</th><th>Cost</th><th>Value</th><th>Status</th></tr></thead>
+  <tbody>${stockRows||'<tr><td colspan="8" style="text-align:center;color:#9ca3af">No stock</td></tr>'}</tbody></table>
+
+  <div class="footer">Red Nectar Business Tracker &nbsp;|&nbsp; Daily Backup &nbsp;|&nbsp; ${d} &nbsp;|&nbsp; Confidential</div>
+  <script>window.onload=()=>{window.print()}<\/script>
+  </body></html>`;
+
+  const w = window.open("","_blank","width=960,height=700");
+  w.document.write(html); w.document.close();
+}
+
+function shareOnWhatsApp(sales, expenses, stocks, funds) {
+  const d = today();
+  const totalSales    = sales.reduce((a,b)=>a+b.amount,0);
+  const totalExpenses = expenses.reduce((a,b)=>a+b.amount,0);
+  const totalFunds    = funds.reduce((a,f)=>a+Number(f.amount),0);
+  const netProfit     = totalSales - totalExpenses;
+  const balance       = totalFunds + netProfit;
+  const paidSales     = sales.filter(s=>s.paymentStatus==="Paid").reduce((a,b)=>a+b.amount,0);
+  const unpaidSales   = sales.filter(s=>s.paymentStatus!=="Paid").reduce((a,b)=>a+b.amount,0);
+  const lowItems      = stocks.filter(s=>Number(s.quantity)<=Number(s.lowAlert||5));
+
+  const fmt = (n) => `₹${Number(n).toLocaleString("en-IN")}`;
+
+  const msg = [
+    `🔴 *Red Nectar — Daily Report*`,
+    `📅 Date: ${d}`,
+    ``,
+    `📊 *SUMMARY*`,
+    `💰 Total Revenue: ${fmt(totalSales)}`,
+    `  ✅ Collected: ${fmt(paidSales)}`,
+    `  ❌ Pending: ${fmt(unpaidSales)}`,
+    `📤 Total Expenses: ${fmt(totalExpenses)}`,
+    `📈 Net Profit: ${fmt(netProfit)}`,
+    ``,
+    `🏦 *FUNDS*`,
+    `Total Funds IN: ${fmt(totalFunds)}`,
+    `Current Balance: ${fmt(balance)}`,
+    ``,
+    lowItems.length>0 ? `⚠️ *LOW STOCK ALERT*\n${lowItems.map(s=>`• ${s.name}: ${s.quantity} ${s.unit} left`).join("\n")}\n` : "",
+    `📦 Stock Items: ${stocks.length}`,
+    `🛒 Sales Today: ${sales.filter(s=>s.date===d).length}`,
+    ``,
+    `_Report generated by Red Nectar Business Tracker_`,
+  ].filter(l=>l!==undefined).join("\n");
+
+  const encoded = encodeURIComponent(msg);
+  window.open(`https://wa.me/?text=${encoded}`, "_blank");
+}
+
+// ─── SVG ICONS ─────────────────────────────────────────────────────────────────
+const Icon = ({ name, size=20, color="currentColor" }) => {
+  const icons = {
+    dashboard:<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>,
+    sales:    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,
+    expenses: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>,
+    report:   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,
+    monthly:  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
+    stock:    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>,
+    logout:   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>,
+    warn:     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
+    download: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
+    arrowIn:  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 19 19 12"/></svg>,
+    arrowOut: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 5 5 12"/></svg>,
+    funds:    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>,
+  };
+  return icons[name] || null;
+};
+
+// ─── ROOT APP ──────────────────────────────────────────────────────────────────
+function App() {
+  const [currentUser,    setCurrentUser]    = useState(null);
+  const [sales,          setSales]          = useState(() => lsGet(LS_KEYS.sales));
+  const [expenses,       setExpenses]       = useState(() => lsGet(LS_KEYS.expenses));
+  const [stocks,         setStocks]         = useState(() => lsGet(LS_KEYS.stocks));
+  const [stockMovements, setStockMovements] = useState(() => lsGet(LS_KEYS.movements));
+  const [funds,          setFunds]          = useState(() => lsGet(LS_KEYS.funds));
+  const [dbStatus,       setDbStatus]       = useState("connecting"); // connecting | online | offline
+
+  const { useEffect } = React;
+
+  // ── Persist to localStorage whenever state changes ────────────────────────
+  useEffect(() => { lsSet(LS_KEYS.sales,     sales);     }, [sales]);
+  useEffect(() => { lsSet(LS_KEYS.expenses,  expenses);  }, [expenses]);
+  useEffect(() => { lsSet(LS_KEYS.stocks,    stocks);    }, [stocks]);
+  useEffect(() => { lsSet(LS_KEYS.movements, stockMovements); }, [stockMovements]);
+  useEffect(() => { lsSet(LS_KEYS.funds,     funds);     }, [funds]);
+
+  // ── Firebase real-time listeners ──────────────────────────────────────────
+  useEffect(() => {
+    if (!firebaseReady) { setDbStatus("offline"); return; }
+    setDbStatus("connecting");
+    const unsubs = [];
+
+    const listen = (colPath, setter, lsKey) => {
+      try {
+        const unsub = db.collection(colPath)
+          .orderBy("id", "desc")
+          .onSnapshot(snap => {
+            const data = snap.docs.map(d => d.data());
+            setter(data);
+            lsSet(lsKey, data);
+            setDbStatus("online");
+          }, err => {
+            console.warn("Firestore error:", err);
+            setDbStatus("offline");
+          });
+        unsubs.push(unsub);
+      } catch(e) { console.warn("Listen failed:", e); setDbStatus("offline"); }
+    };
+
+    listen(COL.sales,     setSales,          LS_KEYS.sales);
+    listen(COL.expenses,  setExpenses,       LS_KEYS.expenses);
+    listen(COL.stocks,    setStocks,         LS_KEYS.stocks);
+    listen(COL.movements, setStockMovements, LS_KEYS.movements);
+    listen(COL.funds,     setFunds,          LS_KEYS.funds);
+
+    return () => unsubs.forEach(u => u());
+  }, []);
+
+  if (!currentUser) return <LoginScreen onLogin={setCurrentUser} />;
+
+  return (
+    <MainApp
+      currentUser={currentUser}
+      onLogout={() => setCurrentUser(null)}
+      sales={sales}             setSales={setSales}
+      expenses={expenses}       setExpenses={setExpenses}
+      stocks={stocks}           setStocks={setStocks}
+      stockMovements={stockMovements} setStockMovements={setStockMovements}
+      funds={funds}             setFunds={setFunds}
+      dbStatus={dbStatus}
+    />
+  );
+}
+
+// ─── LOGIN ─────────────────────────────────────────────────────────────────────
+function LoginScreen({ onLogin }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error,    setError]    = useState("");
+  const [showPass, setShowPass] = useState(false);
+
+  const handleLogin = () => {
+    const user = USERS.find(u => u.username.toLowerCase() === username.trim().toLowerCase() && u.password === password);
+    if (user) { setError(""); onLogin(user); }
+    else setError("Invalid username or password.");
+  };
+
+  return (
+    <div style={ls.bg}>
+      <div style={ls.card}>
+        <div style={ls.logoWrap}>
+          <div style={ls.logoCircle}>🔴</div>
+          <div style={ls.logoName}>Red Nectar</div>
+          <div style={ls.logoSub}>Business Tracker</div>
+        </div>
+        <div style={ls.formTitle}>Sign In</div>
+        <div style={ls.field}>
+          <label style={ls.label}>Username</label>
+          <input style={ls.input} type="text" placeholder="Enter your username" value={username}
+            onChange={e => setUsername(e.target.value)} onKeyDown={e => e.key==="Enter"&&handleLogin()} />
+        </div>
+        <div style={ls.field}>
+          <label style={ls.label}>Password</label>
+          <div style={{position:"relative"}}>
+            <input style={{...ls.input,paddingRight:44}} type={showPass?"text":"password"} placeholder="Enter your password"
+              value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key==="Enter"&&handleLogin()} />
+            <button style={ls.eyeBtn} onClick={() => setShowPass(v=>!v)}>{showPass?"🙈":"👁️"}</button>
+          </div>
+        </div>
+        {error && <div style={ls.error}>{error}</div>}
+        <button style={ls.loginBtn} onClick={handleLogin}>Login →</button>
+        <div style={ls.footer}>Red Nectar © 2024</div>
+      </div>
+    </div>
+  );
+}
+
+const ls = {
+  bg:       { minHeight:"100vh", background:"linear-gradient(145deg,#0f172a 0%,#1e3a8a 50%,#1e40af 100%)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Segoe UI',system-ui,sans-serif", padding:16 },
+  card:     { background:"#fff", borderRadius:24, padding:"36px 28px 28px", width:"100%", maxWidth:360, boxShadow:"0 24px 60px rgba(0,0,0,0.4)" },
+  logoWrap: { textAlign:"center", marginBottom:28 },
+  logoCircle:{ fontSize:48, marginBottom:8 },
+  logoName: { fontWeight:900, fontSize:26, color:"#1e3a8a", letterSpacing:"-0.5px" },
+  logoSub:  { fontSize:12, color:"#6b7280", fontWeight:500, marginTop:2 },
+  formTitle:{ fontWeight:700, fontSize:17, color:"#111827", marginBottom:20 },
+  field:    { marginBottom:16 },
+  label:    { display:"block", fontSize:12, fontWeight:700, color:"#374151", marginBottom:6, textTransform:"uppercase", letterSpacing:"0.5px" },
+  input:    { width:"100%", padding:"12px 14px", borderRadius:10, border:"1.5px solid #e5e7eb", fontSize:14, background:"#f9fafb", color:"#111827", outline:"none", boxSizing:"border-box" },
+  eyeBtn:   { position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", fontSize:16, padding:4 },
+  error:    { background:"#fee2e2", color:"#b91c1c", padding:"9px 14px", borderRadius:8, fontSize:13, fontWeight:600, marginBottom:14, textAlign:"center" },
+  loginBtn: { width:"100%", padding:"14px", background:"linear-gradient(135deg,#1e3a8a,#2563eb)", color:"#fff", border:"none", borderRadius:12, fontWeight:800, fontSize:15, cursor:"pointer", marginTop:4 },
+  footer:   { textAlign:"center", marginTop:24, fontSize:11, color:"#9ca3af" },
+};
+
+// ─── LOGOUT MODAL ──────────────────────────────────────────────────────────────
+function LogoutModal({ user, onConfirm, onCancel }) {
+  return (
+    <div style={modal.overlay}>
+      <div style={modal.box}>
+        <div style={modal.icon}>👋</div>
+        <div style={modal.title}>Logging Out</div>
+        <div style={modal.msg}>Are you sure you want to log out, <strong>{user.display}</strong>?</div>
+        <div style={{display:"flex",gap:10,marginTop:20}}>
+          <button style={{...modal.btn,background:"#e5e7eb",color:"#374151"}} onClick={onCancel}>Cancel</button>
+          <button style={{...modal.btn,background:"linear-gradient(135deg,#1e3a8a,#2563eb)",color:"#fff"}} onClick={onConfirm}>
+            <span style={{display:"flex",alignItems:"center",gap:6,justifyContent:"center"}}>
+              <Icon name="logout" size={16} color="#fff"/> Log Out
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+const modal = {
+  overlay:{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:200, padding:20 },
+  box:    { background:"#fff", borderRadius:20, padding:"28px 24px", maxWidth:300, width:"100%", textAlign:"center", boxShadow:"0 20px 60px rgba(0,0,0,0.3)" },
+  icon:   { fontSize:40, marginBottom:12 },
+  title:  { fontWeight:800, fontSize:18, color:"#111827", marginBottom:8 },
+  msg:    { fontSize:14, color:"#6b7280", lineHeight:1.5 },
+  btn:    { flex:1, padding:"12px", border:"none", borderRadius:10, fontWeight:700, fontSize:14, cursor:"pointer" },
+};
+
+// ─── MAIN APP ──────────────────────────────────────────────────────────────────
+function MainApp({ currentUser, onLogout, sales, setSales, expenses, setExpenses, stocks, setStocks, stockMovements, setStockMovements, funds: fundsProp, setFunds: setFundsProp, dbStatus }) {
+  const [activeTab,       setActiveTab]      = useState("dashboard");
+  const [saleForm,        setSaleForm]       = useState({ amount:"", description:"", date:today(), purchaser:"", mobile:"", paymentStatus:"Paid", stockId:"", stockQty:"" });
+  const [expenseForm,     setExpenseForm]    = useState({ amount:"", category:"Purchase", description:"", date:today() });
+  const [notification,   setNotification]   = useState(null);
+  const [editingSale,    setEditingSale]     = useState(null);
+  const [editingExpense, setEditingExpense]  = useState(null);
+  const [showLogout,     setShowLogout]      = useState(false);
+  const funds    = fundsProp    || [];
+  const setFunds  = setFundsProp || (() => {});
+
+  const isAdmin = currentUser.role === "admin";
+
+  const notify = (msg, type="success") => {
+    setNotification({ msg, type });
+    setTimeout(() => setNotification(null), 2800);
+  };
+
+  const totalSales    = sales.reduce((a,b) => a+b.amount, 0);
+  const totalExpenses = expenses.reduce((a,b) => a+b.amount, 0);
+  const netProfit     = totalSales - totalExpenses;
+
+  const expenseByCategory = EXPENSE_CATEGORIES.map(cat => ({
+    cat, total: expenses.filter(e => e.category===cat).reduce((a,b) => a+b.amount, 0)
+  }));
+
+  // ── Stock movement helpers ────────────────────────────────────────────────
+  const recordStockOut = (stockId, qty, saleId, date, note) => {
+    if (!stockId || !qty || qty <= 0) return;
+    const stock = stocks.find(s => s.id === stockId);
+    if (!stock) return;
+    const newQty = Math.max(0, stock.quantity - qty);
+    const updatedStock = {...stock, quantity:newQty};
+    const movId = Date.now();
+    const mov = { id:movId, stockId, type:"out", qty, date, note:note||"Sale", saleId };
+    if (firebaseReady) {
+      db.collection(COL.stocks).doc(String(stockId)).set(updatedStock).catch(console.error);
+      db.collection(COL.movements).doc(String(movId)).set(mov).catch(console.error);
+    } else {
+      setStocks(prev => prev.map(s => s.id===stockId ? updatedStock : s));
+      setStockMovements(prev => [mov, ...prev]);
+    }
+  };
+
+  const reverseStockOut = (saleId) => {
+    const move = stockMovements.find(m => m.saleId===saleId && m.type==="out");
+    if (!move) return;
+    const stock = stocks.find(s => s.id===move.stockId);
+    if (stock && firebaseReady) {
+      db.collection(COL.stocks).doc(String(move.stockId)).set({...stock, quantity:stock.quantity+move.qty}).catch(console.error);
+      db.collection(COL.movements).doc(String(move.id)).delete().catch(console.error);
+    } else {
+      setStocks(prev => prev.map(s => s.id===move.stockId ? {...s, quantity:s.quantity+move.qty} : s));
+      setStockMovements(prev => prev.filter(m => m.saleId!==saleId));
+    }
+  };
+
+  const recordStockIn = (stockId, qty, date, note) => {
+    if (!stockId || !qty || qty <= 0) return;
+    const stock = stocks.find(s => s.id===stockId);
+    if (!stock) return;
+    const updatedStock = {...stock, quantity:stock.quantity+qty};
+    const movId = Date.now();
+    const mov = { id:movId, stockId, type:"in", qty, date, note:note||"Stock Added" };
+    if (firebaseReady) {
+      db.collection(COL.stocks).doc(String(stockId)).set(updatedStock).catch(console.error);
+      db.collection(COL.movements).doc(String(movId)).set(mov).catch(console.error);
+    } else {
+      setStocks(prev => prev.map(s => s.id===stockId ? updatedStock : s));
+      setStockMovements(prev => [mov, ...prev]);
+    }
+  };
+
+  // ── Sales ────────────────────────────────────────────────────────────────
+  const addSale = () => {
+    const { amount, description, date, purchaser, mobile, paymentStatus, stockId, stockQty } = saleForm;
+    if (!amount || isNaN(amount) || Number(amount)<=0) return notify("Enter a valid amount","error");
+    if (!stockId) return notify("Please select a stock item to deduct","error");
+    const qty = Number(stockQty)||0;
+    if (!qty || qty<=0) return notify("Enter quantity sold from stock","error");
+    const stock = stocks.find(s => s.id===Number(stockId));
+    if (stock && stock.quantity < qty) return notify(`Only ${stock.quantity} ${stock.unit} available in stock!`,"error");
+    const saleId = Date.now();
+    const newSale = { id:saleId, amount:Number(amount), description, date, purchaser, mobile, paymentStatus, stockId:Number(stockId), stockQty:qty };
+    if (firebaseReady) { db.collection(COL.sales).doc(String(saleId)).set(newSale).catch(console.error); }
+    else { setSales([newSale, ...sales]); }
+    recordStockOut(Number(stockId), qty, saleId, date, `Sold to ${purchaser||"customer"}`);
+    setSaleForm({ amount:"", description:"", date:today(), purchaser:"", mobile:"", paymentStatus:"Paid", stockId:"", stockQty:"" });
+    notify("Sale recorded!");
+  };
+
+  const saveSaleEdit = (id, updated) => {
+    const merged = {...sales.find(s=>s.id===id),...updated,amount:Number(updated.amount)};
+    if (firebaseReady) db.collection(COL.sales).doc(String(id)).set(merged).catch(console.error);
+    else setSales(sales.map(s => s.id===id ? merged : s));
+    setEditingSale(null);
+    notify("Sale updated!");
+  };
+
+  const deleteSale = (id) => {
+    reverseStockOut(id);
+    if (firebaseReady) db.collection(COL.sales).doc(String(id)).delete().catch(console.error);
+    else setSales(sales.filter(s => s.id!==id));
+    notify("Sale deleted","error");
+  };
+
+  // ── Expenses ──────────────────────────────────────────────────────────────
+  const addExpense = () => {
+    const { amount, category, description, date } = expenseForm;
+    if (!amount || isNaN(amount) || Number(amount)<=0) return notify("Enter a valid amount","error");
+    const id = Date.now();
+    const newExp = { id, amount:Number(amount), category, description, date };
+    if (firebaseReady) db.collection(COL.expenses).doc(String(id)).set(newExp).catch(console.error);
+    else setExpenses([newExp, ...expenses]);
+    setExpenseForm({ amount:"", category:"Purchase", description:"", date:today() });
+    notify("Expense recorded!");
+  };
+
+  const saveExpenseEdit = (id, updated) => {
+    const merged = {...expenses.find(e=>e.id===id),...updated,amount:Number(updated.amount)};
+    if (firebaseReady) db.collection(COL.expenses).doc(String(id)).set(merged).catch(console.error);
+    else setExpenses(expenses.map(e => e.id===id ? merged : e));
+    setEditingExpense(null);
+    notify("Expense updated!");
+  };
+  const deleteExpense = (id) => {
+    if (firebaseReady) db.collection(COL.expenses).doc(String(id)).delete().catch(console.error);
+    else setExpenses(expenses.filter(e => e.id!==id));
+    notify("Expense deleted","error");
+  };
+
+  // ── Stock CRUD ────────────────────────────────────────────────────────────
+  const addStock = (item) => {
+    const id = Date.now();
+    const newStock = {...item, id};
+    if (firebaseReady) db.collection(COL.stocks).doc(String(id)).set(newStock).catch(console.error);
+    else setStocks([newStock, ...stocks]);
+    notify("Item added!");
+  };
+  const updateStock = (id, upd) => {
+    const merged = {...stocks.find(s=>s.id===id),...upd};
+    if (firebaseReady) db.collection(COL.stocks).doc(String(id)).set(merged).catch(console.error);
+    else setStocks(stocks.map(s=>s.id===id?merged:s));
+    notify("Stock updated!");
+  };
+  const deleteStock = (id) => {
+    if (firebaseReady) {
+      db.collection(COL.stocks).doc(String(id)).delete().catch(console.error);
+      stockMovements.filter(m=>m.stockId===id).forEach(m=>db.collection(COL.movements).doc(String(m.id)).delete().catch(console.error));
+    } else {
+      setStocks(stocks.filter(s=>s.id!==id));
+      setStockMovements(stockMovements.filter(m=>m.stockId!==id));
+    }
+    notify("Stock deleted","error");
+  };
+
+  // ── Funds CRUD ────────────────────────────────────────────────────────────
+  const addFund = (fund) => {
+    const id = Date.now();
+    const newFund = {...fund, id};
+    if (firebaseReady) db.collection(COL.funds).doc(String(id)).set(newFund).catch(console.error);
+    else setFunds([newFund, ...funds]);
+    notify("Fund entry added!");
+  };
+  const deleteFund = (id) => {
+    if (firebaseReady) db.collection(COL.funds).doc(String(id)).delete().catch(console.error);
+    else setFunds(funds.filter(f=>f.id!==id));
+    notify("Fund entry deleted","error");
+  };
+
+  const adminTabs  = ["dashboard","sales","expenses","stock","funds","report","monthly"];
+  const memberTabs = ["dashboard","funds","report","monthly","stock"];
+  const tabs = isAdmin ? adminTabs : memberTabs;
+  const tabMeta = {
+    dashboard:{ icon:"dashboard", label:"Home"     },
+    sales:    { icon:"sales",     label:"Sales"    },
+    expenses: { icon:"expenses",  label:"Expenses" },
+    stock:    { icon:"stock",     label:"Stock"    },
+    funds:    { icon:"funds",     label:"Funds"    },
+    report:   { icon:"report",    label:"Report"   },
+    monthly:  { icon:"monthly",   label:"Monthly"  },
+  };
+
+  return (
+    <div style={S.app}>
+      {showLogout && <LogoutModal user={currentUser} onConfirm={onLogout} onCancel={()=>setShowLogout(false)}/>}
+
+      {/* Header */}
+      <div style={S.header}>
+        <div style={S.headerInner}>
+          <div style={S.logo}>
+            <span style={S.logoIcon}>🔴</span>
+            <div>
+              <div style={S.logoName}>Red Nectar</div>
+              <div style={S.logoSub}>Business Tracker</div>
+            </div>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <div style={{...S.roleBadge,background:isAdmin?"#f59e0b":"#3b82f6"}}>
+              {isAdmin?"👑 Admin":`👤 ${currentUser.display}`}
+            </div>
+            <button style={S.logoutBtn} onClick={()=>setShowLogout(true)} title="Logout">
+              <Icon name="logout" size={18} color="#fff"/>
+            </button>
+          </div>
+        </div>
+        <div style={S.profitBar}>
+          <span style={{color:"#93c5fd",fontSize:12}}>Net Profit</span>
+          <div style={{...S.headerBadge,background:netProfit>=0?"#1a6b3c":"#6b1a1a"}}>
+            {netProfit>=0?"▲":"▼"} {formatCurrency(Math.abs(netProfit))}
+          </div>
+          <div style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:10,
+            background:dbStatus==="online"?"#14532d":dbStatus==="connecting"?"#78350f":"#450a0a",
+            color:dbStatus==="online"?"#86efac":dbStatus==="connecting"?"#fde68a":"#fca5a5",
+            marginLeft:"auto"}}>
+            {dbStatus==="online"?"☁️ Cloud Sync":dbStatus==="connecting"?"⏳ Connecting...":"📴 Offline"}
+          </div>
+        </div>
+      </div>
+
+      {notification && (
+        <div style={{...S.notification,background:notification.type==="error"?"#dc2626":"#1d7e4a"}}>
+          {notification.msg}
+        </div>
+      )}
+
+      <div style={S.content}>
+        {activeTab==="dashboard" && <Dashboard totalSales={totalSales} totalExpenses={totalExpenses} netProfit={netProfit} expenseByCategory={expenseByCategory} sales={sales} expenses={expenses} stocks={stocks} stockMovements={stockMovements} funds={funds}/>}
+        {activeTab==="sales"     && isAdmin && <SalesTab sales={sales} form={saleForm} onChange={p=>setSaleForm({...saleForm,...p})} onAdd={addSale} onDelete={deleteSale} editingSale={editingSale} setEditingSale={setEditingSale} onSaveEdit={saveSaleEdit} stocks={stocks}/>}
+        {activeTab==="expenses"  && isAdmin && <ExpensesTab expenses={expenses} form={expenseForm} onChange={p=>setExpenseForm({...expenseForm,...p})} onAdd={addExpense} onDelete={deleteExpense} editingExpense={editingExpense} setEditingExpense={setEditingExpense} onSaveEdit={saveExpenseEdit}/>}
+        {activeTab==="stock"     && (isAdmin
+          ? <StockEntry stocks={stocks} onAdd={addStock} onUpdate={updateStock} onDelete={deleteStock} stockMovements={stockMovements} onStockIn={recordStockIn}/>
+          : <StockReport stocks={stocks} stockMovements={stockMovements}/>
+        )}
+        {activeTab==="funds"    && <FundsTab funds={funds} onAdd={isAdmin?addFund:null} onDelete={isAdmin?deleteFund:null} sales={sales} expenses={expenses} isAdmin={isAdmin}/>}
+        {activeTab==="report"   && <Report totalSales={totalSales} totalExpenses={totalExpenses} netProfit={netProfit} expenseByCategory={expenseByCategory} sales={sales} expenses={expenses}/>}
+        {activeTab==="monthly"  && <MonthlyReport sales={sales} expenses={expenses}/>}
+      </div>
+
+      <div style={S.nav}>
+        {tabs.map(tab => {
+          const active = activeTab===tab;
+          const {icon,label} = tabMeta[tab];
+          return (
+            <button key={tab} style={{...S.navBtn,...(active?S.navBtnActive:{})}} onClick={()=>setActiveTab(tab)}>
+              <Icon name={icon} size={active?22:19} color={active?"#1e40af":"#9ca3af"}/>
+              <span style={{...S.navLabel,color:active?"#1e40af":"#6b7280"}}>{label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── DASHBOARD ─────────────────────────────────────────────────────────────────
+function Dashboard({ totalSales, totalExpenses, netProfit, expenseByCategory, sales, expenses, stocks, stockMovements, funds }) {
+  const maxExp   = Math.max(...expenseByCategory.map(e=>e.total), 1);
+  const lowStock = stocks.filter(s => Number(s.quantity)<=Number(s.lowAlert||5));
+  const recentActivity = [
+    ...sales.slice(0,3).map(s=>({...s,type:"sale"})),
+    ...expenses.slice(0,3).map(e=>({...e,type:"expense"})),
+  ].sort((a,b)=>b.id-a.id).slice(0,5);
+
+  const recentMoves = stockMovements.slice(0,5);
+  const totalFunds  = funds.reduce((a,f)=>a+Number(f.amount),0);
+  const balance     = totalFunds + netProfit;
+
+  return (
+    <div style={S.section}>
+      <div style={S.kpiGrid}>
+        <KPI label="Total Sales"  value={formatCurrency(totalSales)}   color="#1e40af" icon="💰"/>
+        <KPI label="Expenses"     value={formatCurrency(totalExpenses)} color="#b91c1c" icon="📤"/>
+        <KPI label="Net Profit"   value={formatCurrency(netProfit)}     color={netProfit>=0?"#1d7e4a":"#b91c1c"} icon="📈"/>
+      </div>
+
+      {/* Funds balance banner */}
+      {funds.length>0 && (
+        <div style={{background:"linear-gradient(135deg,#4c1d95,#7c3aed)",borderRadius:14,padding:"12px 16px",color:"#fff",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:11,opacity:0.8}}>Current Balance</div>
+            <div style={{fontSize:18,fontWeight:900,marginTop:2}}>{formatCurrency(balance)}</div>
+          </div>
+          <div style={{fontSize:11,opacity:0.8,textAlign:"right"}}>
+            <div>Funds IN: {formatCurrency(totalFunds)}</div>
+            <div>Net P&L: {formatCurrency(netProfit)}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Daily Export + WhatsApp Share */}
+      <div style={{background:"#fff",borderRadius:14,padding:"14px 16px",boxShadow:"0 2px 12px rgba(0,0,0,0.07)"}}>
+        <div style={{fontWeight:800,fontSize:13,color:"#111827",marginBottom:10}}>📤 Daily Backup & Share</div>
+        <div style={{fontSize:11,color:"#6b7280",marginBottom:10}}>
+          Export today's full report (Stock, Sales, Expenses, Funds) and share to the Red Nectar WhatsApp group.
+        </div>
+        <div style={{display:"flex",gap:8,marginBottom:8}}>
+          <button onClick={()=>exportDailyCSV(sales,expenses,stocks,stockMovements,funds)} style={{...S.dlBtn,background:"#166534",flex:1,padding:"11px"}}>
+            <Icon name="download" size={14} color="#fff"/><span style={{fontSize:12}}>📊 Excel</span>
+          </button>
+          <button onClick={()=>exportDailyPDF(sales,expenses,stocks,stockMovements,funds)} style={{...S.dlBtn,background:"#b91c1c",flex:1,padding:"11px"}}>
+            <Icon name="download" size={14} color="#fff"/><span style={{fontSize:12}}>📄 PDF</span>
+          </button>
+        </div>
+        <button onClick={()=>shareOnWhatsApp(sales,expenses,stocks,funds)}
+          style={{width:"100%",padding:"12px",background:"#25D366",color:"#fff",border:"none",borderRadius:12,fontWeight:800,fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+          <span style={{fontSize:18}}>💬</span> Share to WhatsApp Group
+        </button>
+        <div style={{fontSize:10,color:"#9ca3af",textAlign:"center",marginTop:6}}>Opens WhatsApp with today's summary — tap Send to post in your group</div>
+      </div>
+
+      {lowStock.length>0 && (
+        <div style={S.alertBox}>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+            <Icon name="warn" size={16} color="#92400e"/>
+            <span style={{fontWeight:700,fontSize:13,color:"#92400e"}}>Low Stock Alert ({lowStock.length} items)</span>
+          </div>
+          {lowStock.map(s=>(
+            <div key={s.id} style={{fontSize:12,color:"#78350f",display:"flex",justifyContent:"space-between",padding:"3px 0"}}>
+              <span>{s.name}</span><span style={{fontWeight:700}}>{s.quantity} {s.unit} left</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Real-time stock movements */}
+      {recentMoves.length>0 && (
+        <div style={S.card}>
+          <div style={S.cardTitle}>🔄 Recent Stock Movements</div>
+          {recentMoves.map(m => {
+            const stock = stocks.find(s=>s.id===m.stockId);
+            return (
+              <div key={m.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #f3f4f6"}}>
+                <div>
+                  <div style={{fontWeight:600,fontSize:13,color:"#111827"}}>{stock?.name||"—"}</div>
+                  <div style={{fontSize:11,color:"#9ca3af"}}>{m.note} • {m.date}</div>
+                </div>
+                <span style={{fontWeight:800,fontSize:14,color:m.type==="in"?"#1d7e4a":"#b91c1c",display:"flex",alignItems:"center",gap:4}}>
+                  {m.type==="in"?"📦 +":"🛒 -"}{m.qty}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div style={S.card}>
+        <div style={S.cardTitle}>Expense Breakdown</div>
+        {expenseByCategory.map(({cat,total})=>(
+          <div key={cat} style={{marginBottom:10}}>
+            <div style={S.barLabel}>
+              <span style={{color:"#374151",fontWeight:600,fontSize:13}}>{cat}</span>
+              <span style={{color:"#1e40af",fontWeight:700,fontSize:13}}>{formatCurrency(total)}</span>
+            </div>
+            <div style={S.barBg}><div style={{...S.barFill,width:`${(total/maxExp)*100}%`}}/></div>
+          </div>
+        ))}
+      </div>
+
+      <div style={S.card}>
+        <div style={S.cardTitle}>Recent Activity</div>
+        {recentActivity.length===0 && <div style={S.empty}>No activity yet.</div>}
+        {recentActivity.map(item=>(
+          <div key={item.id} style={S.activityRow}>
+            <div>
+              <div style={{fontWeight:600,fontSize:13,color:"#111827"}}>{item.description||(item.type==="sale"?"Sale":item.category)}</div>
+              <div style={{fontSize:11,color:"#9ca3af"}}>{item.date}</div>
+            </div>
+            <div style={{fontWeight:700,color:item.type==="sale"?"#1d7e4a":"#b91c1c"}}>
+              {item.type==="sale"?"+":"-"}{formatCurrency(item.amount)}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function KPI({ label, value, color, icon }) {
+  return (
+    <div style={{...S.kpiCard,borderTop:`4px solid ${color}`}}>
+      <div style={S.kpiIcon}>{icon}</div>
+      <div style={{fontSize:10,color:"#6b7280",fontWeight:600,marginBottom:2}}>{label}</div>
+      <div style={{fontSize:13,fontWeight:800,color}}>{value}</div>
+    </div>
+  );
+}
+
+// ─── SALES TAB (Admin) — with stock linking ────────────────────────────────────
+function SalesTab({ sales, form, onChange, onAdd, onDelete, editingSale, setEditingSale, onSaveEdit, stocks }) {
+  const [editForm, setEditForm] = useState({});
+  const startEdit  = s => { setEditingSale(s.id); setEditForm({amount:s.amount,description:s.description,date:s.date,purchaser:s.purchaser||"",mobile:s.mobile||"",paymentStatus:s.paymentStatus||"Paid"}); };
+  const cancelEdit = () => setEditingSale(null);
+
+  const selectedStock = stocks.find(s => s.id===Number(form.stockId));
+
+  return (
+    <div style={S.section}>
+      <div style={S.card}>
+        <div style={S.cardTitle}>Record Sale</div>
+        <input style={S.input} type="text" placeholder="Purchaser Name" value={form.purchaser} onChange={e=>onChange({purchaser:e.target.value})}/>
+        <input style={S.input} type="tel"  placeholder="📱 Mobile Number" value={form.mobile} onChange={e=>onChange({mobile:e.target.value})}/>
+        <input style={S.input} type="number" placeholder="Amount (₹)" value={form.amount} onChange={e=>onChange({amount:e.target.value})}/>
+        <div style={{display:"flex",gap:8,marginBottom:10}}>
+          <button onClick={()=>onChange({paymentStatus:"Paid"})}     style={{...S.payBtn,background:form.paymentStatus==="Paid"    ?"#1d7e4a":"#e5e7eb",color:form.paymentStatus==="Paid"    ?"#fff":"#374151"}}>✅ Paid</button>
+          <button onClick={()=>onChange({paymentStatus:"Not Paid"})} style={{...S.payBtn,background:form.paymentStatus==="Not Paid"?"#b91c1c":"#e5e7eb",color:form.paymentStatus==="Not Paid"?"#fff":"#374151"}}>❌ Not Paid</button>
+        </div>
+
+        {/* Stock Link — mandatory */}
+        <div style={{background:"#f0fdf4",border:"1.5px solid #bbf7d0",borderRadius:12,padding:12,marginBottom:10}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <div style={{fontWeight:700,fontSize:12,color:"#166534"}}>📦 Stock Deduction</div>
+            <span style={{fontSize:10,fontWeight:700,background:"#b91c1c",color:"#fff",padding:"2px 8px",borderRadius:10}}>REQUIRED</span>
+          </div>
+          <select style={{...S.input,marginBottom:8,border: !form.stockId ? "1.5px solid #fca5a5" : "1.5px solid #bbf7d0"}} value={form.stockId} onChange={e=>onChange({stockId:e.target.value,stockQty:""})}>
+            <option value="">— Select item sold * —</option>
+            {stocks.map(s=>(
+              <option key={s.id} value={s.id}>{s.name} ({s.quantity} {s.unit} available)</option>
+            ))}
+          </select>
+          {form.stockId && (
+            <div>
+              <input style={{...S.input,marginBottom:4}} type="number" placeholder="Qty sold *" value={form.stockQty} onChange={e=>onChange({stockQty:e.target.value})}/>
+              {selectedStock && <div style={{fontSize:11,color:selectedStock.quantity<Number(form.stockQty||0)?"#b91c1c":"#1d7e4a",fontWeight:600,marginBottom:4}}>
+                {selectedStock.quantity<Number(form.stockQty||0)
+                  ? `⚠ Insufficient! Only ${selectedStock.quantity} ${selectedStock.unit} available`
+                  : `✓ ${selectedStock.quantity} ${selectedStock.unit} in stock`}
+              </div>}
+            </div>
+          )}
+          {!form.stockId && <div style={{fontSize:11,color:"#b91c1c",fontWeight:600}}>⚠ Select a stock item before saving the sale</div>}
+        </div>
+
+        <input style={S.input} type="text" placeholder="Description (optional)" value={form.description} onChange={e=>onChange({description:e.target.value})}/>
+        <input style={S.input} type="date" value={form.date} onChange={e=>onChange({date:e.target.value})}/>
+        <button style={S.btnPrimary} onClick={onAdd}>+ Add Sale</button>
+      </div>
+
+      <div style={S.card}>
+        <div style={S.cardTitle}>Sales History ({sales.length})</div>
+        {sales.length===0 && <div style={S.empty}>No sales recorded yet.</div>}
+        {sales.map(s => editingSale===s.id ? (
+          <div key={s.id} style={S.editBox}>
+            <input style={S.input} type="text" placeholder="Purchaser Name" value={editForm.purchaser} onChange={e=>setEditForm({...editForm,purchaser:e.target.value})}/>
+            <input style={S.input} type="tel"  placeholder="📱 Mobile Number" value={editForm.mobile} onChange={e=>setEditForm({...editForm,mobile:e.target.value})}/>
+            <input style={S.input} type="number" value={editForm.amount} onChange={e=>setEditForm({...editForm,amount:e.target.value})}/>
+            <div style={{display:"flex",gap:8,marginBottom:10}}>
+              <button onClick={()=>setEditForm({...editForm,paymentStatus:"Paid"})}     style={{...S.payBtn,background:editForm.paymentStatus==="Paid"    ?"#1d7e4a":"#e5e7eb",color:editForm.paymentStatus==="Paid"    ?"#fff":"#374151"}}>✅ Paid</button>
+              <button onClick={()=>setEditForm({...editForm,paymentStatus:"Not Paid"})} style={{...S.payBtn,background:editForm.paymentStatus==="Not Paid"?"#b91c1c":"#e5e7eb",color:editForm.paymentStatus==="Not Paid"?"#fff":"#374151"}}>❌ Not Paid</button>
+            </div>
+            <input style={S.input} type="text" placeholder="Description" value={editForm.description} onChange={e=>setEditForm({...editForm,description:e.target.value})}/>
+            <input style={S.input} type="date" value={editForm.date} onChange={e=>setEditForm({...editForm,date:e.target.value})}/>
+            <div style={{display:"flex",gap:8}}>
+              <button style={{...S.btnSm,background:"#1e40af",color:"#fff"}} onClick={()=>onSaveEdit(s.id,editForm)}>Save</button>
+              <button style={{...S.btnSm,background:"#e5e7eb",color:"#374151"}} onClick={cancelEdit}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <div key={s.id} style={{...S.listRow,flexDirection:"column",alignItems:"flex-start",gap:6}}>
+            <div style={{display:"flex",justifyContent:"space-between",width:"100%",alignItems:"center"}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:13,color:"#111827"}}>{s.purchaser||"—"}</div>
+                <div style={{fontSize:11,color:"#9ca3af"}}>{s.mobile ? `📱 ${s.mobile} • ` : ""}{s.description||"Sale"} • {s.date}</div>
+                {s.stockId && (() => { const stk=stocks.find(x=>x.id===s.stockId); return stk?<div style={{fontSize:11,color:"#1d7e4a",fontWeight:600}}>📦 {stk.name} — {s.stockQty} {stk.unit} deducted</div>:null; })()}
+              </div>
+              <div style={S.rowRight}>
+                <span style={{fontWeight:700,color:"#1d7e4a"}}>+{formatCurrency(s.amount)}</span>
+                <button style={{...S.actionBtn,background:"#eff6ff",color:"#1e40af"}} onClick={()=>startEdit(s)}>✏️</button>
+                <button style={{...S.actionBtn,background:"#fee2e2",color:"#b91c1c"}} onClick={()=>onDelete(s.id)}>🗑️</button>
+              </div>
+            </div>
+            <span style={{fontSize:11,fontWeight:700,padding:"2px 10px",borderRadius:12,background:s.paymentStatus==="Paid"?"#dcfce7":"#fee2e2",color:s.paymentStatus==="Paid"?"#166534":"#b91c1c"}}>
+              {s.paymentStatus==="Paid"?"✅ Paid":"❌ Not Paid"}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── EXPENSES TAB (Admin) ──────────────────────────────────────────────────────
+function ExpensesTab({ expenses, form, onChange, onAdd, onDelete, editingExpense, setEditingExpense, onSaveEdit }) {
+  const [editForm, setEditForm] = useState({});
+  const startEdit  = e => { setEditingExpense(e.id); setEditForm({amount:e.amount,category:e.category,description:e.description,date:e.date}); };
+  const cancelEdit = () => setEditingExpense(null);
+  return (
+    <div style={S.section}>
+      <div style={S.card}>
+        <div style={S.cardTitle}>Record Expense</div>
+        <input style={S.input} type="number" placeholder="Amount (₹)" value={form.amount} onChange={e=>onChange({amount:e.target.value})}/>
+        <select style={S.input} value={form.category} onChange={e=>onChange({category:e.target.value})}>
+          {EXPENSE_CATEGORIES.map(c=><option key={c}>{c}</option>)}
+        </select>
+        <input style={S.input} type="text" placeholder="Description (optional)" value={form.description} onChange={e=>onChange({description:e.target.value})}/>
+        <input style={S.input} type="date" value={form.date} onChange={e=>onChange({date:e.target.value})}/>
+        <button style={{...S.btnPrimary,background:"#b91c1c"}} onClick={onAdd}>+ Add Expense</button>
+      </div>
+      <div style={S.card}>
+        <div style={S.cardTitle}>Expense History ({expenses.length})</div>
+        {expenses.length===0 && <div style={S.empty}>No expenses recorded yet.</div>}
+        {expenses.map(e => editingExpense===e.id ? (
+          <div key={e.id} style={S.editBox}>
+            <input style={S.input} type="number" value={editForm.amount} onChange={ev=>setEditForm({...editForm,amount:ev.target.value})}/>
+            <select style={S.input} value={editForm.category} onChange={ev=>setEditForm({...editForm,category:ev.target.value})}>
+              {EXPENSE_CATEGORIES.map(c=><option key={c}>{c}</option>)}
+            </select>
+            <input style={S.input} type="text" placeholder="Description" value={editForm.description} onChange={ev=>setEditForm({...editForm,description:ev.target.value})}/>
+            <input style={S.input} type="date" value={editForm.date} onChange={ev=>setEditForm({...editForm,date:ev.target.value})}/>
+            <div style={{display:"flex",gap:8}}>
+              <button style={{...S.btnSm,background:"#b91c1c",color:"#fff"}} onClick={()=>onSaveEdit(e.id,editForm)}>Save</button>
+              <button style={{...S.btnSm,background:"#e5e7eb",color:"#374151"}} onClick={cancelEdit}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <div key={e.id} style={S.listRow}>
+            <div>
+              <div style={{fontWeight:600,fontSize:13,color:"#111827"}}>{e.description||e.category}</div>
+              <div style={{fontSize:11,color:"#9ca3af"}}>{e.category} • {e.date}</div>
+            </div>
+            <div style={S.rowRight}>
+              <span style={{fontWeight:700,color:"#b91c1c"}}>-{formatCurrency(e.amount)}</span>
+              <button style={{...S.actionBtn,background:"#eff6ff",color:"#1e40af"}} onClick={()=>startEdit(e)}>✏️</button>
+              <button style={{...S.actionBtn,background:"#fee2e2",color:"#b91c1c"}} onClick={()=>onDelete(e.id)}>🗑️</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── STOCK ENTRY (Admin) ───────────────────────────────────────────────────────
+function StockEntry({ stocks, onAdd, onUpdate, onDelete, stockMovements, onStockIn }) {
+  const emptyForm = { name:"", quantity:"", unit:"Pcs", costPrice:"", sellingPrice:"", category:"", lowAlert:"5", dateAdded:today(), notes:"", image:"" };
+  const [form,    setForm]    = useState(emptyForm);
+  const [showAdd, setShowAdd] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [editForm,setEditForm]= useState({});
+  const [search,  setSearch]  = useState("");
+  const [inForm,  setInForm]  = useState({ stockId:"", qty:"", date:today(), note:"" });
+
+  const handleAdd = () => {
+    if (!form.name.trim() || !form.quantity || isNaN(form.quantity)) return;
+    onAdd({...form, quantity:Number(form.quantity), costPrice:Number(form.costPrice)||0, sellingPrice:Number(form.sellingPrice)||0, lowAlert:Number(form.lowAlert)||5});
+    setForm(emptyForm);
+    setShowAdd(false);
+  };
+
+  const saveEdit = () => {
+    onUpdate(editing, {...editForm, quantity:Number(editForm.quantity), costPrice:Number(editForm.costPrice)||0, sellingPrice:Number(editForm.sellingPrice)||0, lowAlert:Number(editForm.lowAlert)||5});
+    setEditing(null);
+  };
+
+  const handleStockIn = () => {
+    if (!inForm.stockId || !inForm.qty || Number(inForm.qty)<=0) return;
+    onStockIn(Number(inForm.stockId), Number(inForm.qty), inForm.date, inForm.note||"Stock replenished");
+    setInForm({stockId:"",qty:"",date:today(),note:""});
+  };
+
+  const handleImageUpload = (e, setter) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => setter(img => ({...img, image: ev.target.result}));
+    reader.readAsDataURL(file);
+  };
+
+  const filtered = stocks.filter(s => s.name.toLowerCase().includes(search.toLowerCase())||(s.category||"").toLowerCase().includes(search.toLowerCase()));
+  const totalStockValue = stocks.reduce((a,s) => a+(s.quantity*s.costPrice), 0);
+  const lowStockCount   = stocks.filter(s => Number(s.quantity)<=Number(s.lowAlert||5)).length;
+
+  return (
+    <div style={S.section}>
+      {/* KPIs */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+        <KPI label="Items"       value={stocks.length}                   color="#1e40af" icon="📦"/>
+        <KPI label="Stock Value" value={formatCurrency(totalStockValue)} color="#1d7e4a" icon="💎"/>
+        <KPI label="Low Stock"   value={lowStockCount}                   color={lowStockCount>0?"#b91c1c":"#6b7280"} icon="⚠️"/>
+      </div>
+
+      {/* Download Buttons */}
+      <div style={{display:"flex",gap:10}}>
+        <button onClick={()=>downloadExcel(stocks)} style={{...S.dlBtn,background:"#166534",flex:1}}>
+          <Icon name="download" size={15} color="#fff"/><span>📊 Excel</span>
+        </button>
+        <button onClick={()=>downloadPDF(stocks,stockMovements)} style={{...S.dlBtn,background:"#b91c1c",flex:1}}>
+          <Icon name="download" size={15} color="#fff"/><span>📄 PDF</span>
+        </button>
+      </div>
+
+      {/* ── 1. ADD NEW ITEM (collapsible, first) ── */}
+      <div style={{borderRadius:14,overflow:"hidden",boxShadow:"0 2px 12px rgba(0,0,0,0.07)"}}>
+        <button
+          style={{width:"100%",background:showAdd?"#1e40af":"#fff",color:showAdd?"#fff":"#1e40af",border:"2px solid #1e40af",borderRadius:showAdd?"14px 14px 0 0":"14px",padding:"13px 16px",fontWeight:800,fontSize:15,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between"}}
+          onClick={()=>setShowAdd(v=>!v)}
+        >
+          <span>➕ Add New Item</span>
+          <span style={{fontSize:18,lineHeight:1}}>{showAdd?"▲":"▼"}</span>
+        </button>
+        {showAdd && (
+          <div style={{background:"#fff",padding:16,border:"2px solid #1e40af",borderTop:"none",borderRadius:"0 0 14px 14px"}}>
+            {/* Image upload */}
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:12,fontWeight:700,color:"#374151",marginBottom:6}}>Product Image (optional)</div>
+              {form.image
+                ? <div style={{position:"relative",display:"inline-block"}}>
+                    <img src={form.image} alt="product" style={{width:"100%",height:120,objectFit:"cover",borderRadius:10,border:"2px solid #e5e7eb"}}/>
+                    <button onClick={()=>setForm({...form,image:""})} style={{position:"absolute",top:4,right:4,background:"#b91c1c",color:"#fff",border:"none",borderRadius:"50%",width:24,height:24,cursor:"pointer",fontSize:14,lineHeight:1}}>×</button>
+                  </div>
+                : <label style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",border:"2px dashed #bfdbfe",borderRadius:10,padding:"18px 0",cursor:"pointer",background:"#f0f9ff",gap:6}}>
+                    <span style={{fontSize:28}}>📷</span>
+                    <span style={{fontSize:12,color:"#6b7280",fontWeight:600}}>Tap to upload photo</span>
+                    <input type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>handleImageUpload(e, setForm)}/>
+                  </label>
+              }
+            </div>
+            <input style={S.input} type="text"   placeholder="Item Name *"            value={form.name}         onChange={e=>setForm({...form,name:e.target.value})}/>
+            <input style={S.input} type="text"   placeholder="Category (e.g. Drinks)" value={form.category}     onChange={e=>setForm({...form,category:e.target.value})}/>
+            <div style={{display:"flex",gap:8}}>
+              <input style={{...S.input,flex:2}} type="number" placeholder="Opening Stock qty *" value={form.quantity} onChange={e=>setForm({...form,quantity:e.target.value})}/>
+              <select style={{...S.input,flex:1}} value={form.unit} onChange={e=>setForm({...form,unit:e.target.value})}>
+                {UNITS.map(u=><option key={u}>{u}</option>)}
+              </select>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <input style={{...S.input,flex:1}} type="number" placeholder="Cost Price (₹)"    value={form.costPrice}    onChange={e=>setForm({...form,costPrice:e.target.value})}/>
+              <input style={{...S.input,flex:1}} type="number" placeholder="Selling Price (₹)" value={form.sellingPrice} onChange={e=>setForm({...form,sellingPrice:e.target.value})}/>
+            </div>
+            <input style={S.input} type="number" placeholder="Low Stock Alert qty" value={form.lowAlert}   onChange={e=>setForm({...form,lowAlert:e.target.value})}/>
+            <input style={S.input} type="date"   value={form.dateAdded}              onChange={e=>setForm({...form,dateAdded:e.target.value})}/>
+            <input style={S.input} type="text"   placeholder="Notes (optional)"      value={form.notes}    onChange={e=>setForm({...form,notes:e.target.value})}/>
+            <div style={{display:"flex",gap:8}}>
+              <button style={{...S.btnPrimary,flex:1,marginTop:2,background:"#1e40af"}} onClick={handleAdd}>✓ Add Item</button>
+              <button style={{...S.btnSm,background:"#e5e7eb",color:"#374151",flex:"none",padding:"13px 18px"}} onClick={()=>{setForm(emptyForm);setShowAdd(false);}}>Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── 2. RESTOCK EXISTING ITEM (always open) ── */}
+      <div style={{...S.card,border:"2px solid #bbf7d0"}}>
+        <div style={{...S.cardTitle,color:"#1d7e4a"}}>📥 Restock Existing Item</div>
+        <div style={{fontSize:11,color:"#6b7280",marginBottom:10}}>Add quantity to an item already in inventory — logged in movement history</div>
+        <select style={S.input} value={inForm.stockId} onChange={e=>setInForm({...inForm,stockId:e.target.value})}>
+          <option value="">Select existing item *</option>
+          {stocks.map(s=><option key={s.id} value={s.id}>{s.name} (current: {s.quantity} {s.unit})</option>)}
+        </select>
+        <input style={S.input} type="number" placeholder="Quantity received *" value={inForm.qty} onChange={e=>setInForm({...inForm,qty:e.target.value})}/>
+        <input style={S.input} type="date" value={inForm.date} onChange={e=>setInForm({...inForm,date:e.target.value})}/>
+        <input style={S.input} type="text" placeholder="Note (e.g. supplier name)" value={inForm.note} onChange={e=>setInForm({...inForm,note:e.target.value})}/>
+        <button style={{...S.btnPrimary,background:"#1d7e4a"}} onClick={handleStockIn}>✓ Confirm Restock</button>
+      </div>
+
+      {/* ── 3. INVENTORY LIST ── */}
+      <div style={S.card}>
+        <div style={S.cardTitle}>Stock Inventory ({stocks.length})</div>
+        <input style={{...S.input,marginBottom:12}} type="text" placeholder="🔍 Search items..." value={search} onChange={e=>setSearch(e.target.value)}/>
+        {filtered.length===0 && <div style={S.empty}>No stock items found.</div>}
+        {filtered.map(s => {
+          const isLow  = Number(s.quantity)<=Number(s.lowAlert||5);
+          const moves  = stockMovements.filter(m=>m.stockId===s.id);
+          const totOut = moves.filter(m=>m.type==="out").reduce((a,m)=>a+m.qty,0);
+          const totIn  = moves.filter(m=>m.type==="in").reduce((a,m)=>a+m.qty,0);
+          return editing===s.id ? (
+            <div key={s.id} style={S.editBox}>
+              {/* Image in edit */}
+              <div style={{marginBottom:10}}>
+                {editForm.image
+                  ? <div style={{position:"relative",display:"inline-block",width:"100%"}}>
+                      <img src={editForm.image} alt="product" style={{width:"100%",height:100,objectFit:"cover",borderRadius:8}}/>
+                      <button onClick={()=>setEditForm({...editForm,image:""})} style={{position:"absolute",top:4,right:4,background:"#b91c1c",color:"#fff",border:"none",borderRadius:"50%",width:24,height:24,cursor:"pointer",fontSize:14}}>×</button>
+                    </div>
+                  : <label style={{display:"flex",alignItems:"center",gap:8,border:"2px dashed #bfdbfe",borderRadius:8,padding:"10px 12px",cursor:"pointer",background:"#f0f9ff"}}>
+                      <span>📷</span><span style={{fontSize:12,color:"#6b7280"}}>Change photo</span>
+                      <input type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>handleImageUpload(e, setEditForm)}/>
+                    </label>
+                }
+              </div>
+              <input style={S.input} type="text"   placeholder="Item Name" value={editForm.name}     onChange={e=>setEditForm({...editForm,name:e.target.value})}/>
+              <input style={S.input} type="text"   placeholder="Category"  value={editForm.category} onChange={e=>setEditForm({...editForm,category:e.target.value})}/>
+              <div style={{display:"flex",gap:8}}>
+                <input style={{...S.input,flex:2}} type="number" placeholder="Quantity" value={editForm.quantity} onChange={e=>setEditForm({...editForm,quantity:e.target.value})}/>
+                <select style={{...S.input,flex:1}} value={editForm.unit} onChange={e=>setEditForm({...editForm,unit:e.target.value})}>
+                  {UNITS.map(u=><option key={u}>{u}</option>)}
+                </select>
+              </div>
+              <div style={{display:"flex",gap:8}}>
+                <input style={{...S.input,flex:1}} type="number" placeholder="Cost Price"    value={editForm.costPrice}    onChange={e=>setEditForm({...editForm,costPrice:e.target.value})}/>
+                <input style={{...S.input,flex:1}} type="number" placeholder="Selling Price" value={editForm.sellingPrice} onChange={e=>setEditForm({...editForm,sellingPrice:e.target.value})}/>
+              </div>
+              <input style={S.input} type="number" placeholder="Low Alert qty" value={editForm.lowAlert} onChange={e=>setEditForm({...editForm,lowAlert:e.target.value})}/>
+              <input style={S.input} type="text"   placeholder="Notes"         value={editForm.notes}    onChange={e=>setEditForm({...editForm,notes:e.target.value})}/>
+              <div style={{display:"flex",gap:8}}>
+                <button style={{...S.btnSm,background:"#1d7e4a",color:"#fff"}} onClick={saveEdit}>Save</button>
+                <button style={{...S.btnSm,background:"#e5e7eb",color:"#374151"}} onClick={()=>setEditing(null)}>Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <div key={s.id} style={{...S.stockRow,borderLeft:`4px solid ${isLow?'#b91c1c':'#1d7e4a'}`}}>
+              {/* Product image thumbnail */}
+              {s.image && <img src={s.image} alt={s.name} style={{width:48,height:48,objectFit:"cover",borderRadius:8,flexShrink:0}}/>}
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                  <span style={{fontWeight:700,fontSize:13,color:"#111827"}}>{s.name}</span>
+                  {s.category&&<span style={S.catBadge}>{s.category}</span>}
+                  {isLow&&<span style={S.lowBadge}>⚠️ Low</span>}
+                </div>
+                <div style={{fontSize:11,color:"#6b7280",marginTop:3}}>Cost: {formatCurrency(s.costPrice)} | Sell: {formatCurrency(s.sellingPrice)}</div>
+                <div style={{display:"flex",gap:10,marginTop:4}}>
+                  <span style={{fontSize:11,color:"#1d7e4a",fontWeight:600}}>📦 IN: {totIn}</span>
+                  <span style={{fontSize:11,color:"#b91c1c",fontWeight:600}}>🛒 OUT: {totOut}</span>
+                </div>
+                {s.notes&&<div style={{fontSize:11,color:"#9ca3af",fontStyle:"italic",marginTop:1}}>{s.notes}</div>}
+              </div>
+              <div style={{textAlign:"right",minWidth:60,flexShrink:0}}>
+                <div style={{fontWeight:800,fontSize:15,color:isLow?"#b91c1c":"#1d7e4a"}}>{s.quantity}</div>
+                <div style={{fontSize:10,color:"#9ca3af"}}>{s.unit}</div>
+                <div style={{display:"flex",gap:4,marginTop:4,justifyContent:"flex-end"}}>
+                  <button style={{...S.actionBtn,background:"#eff6ff",color:"#1e40af"}} onClick={()=>{setEditing(s.id);setEditForm({...s});}}>✏️</button>
+                  <button style={{...S.actionBtn,background:"#fee2e2",color:"#b91c1c"}} onClick={()=>onDelete(s.id)}>🗑️</button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── STOCK REPORT (Members) — with Excel + PDF download ───────────────────────
+function StockReport({ stocks, stockMovements }) {
+  const [search,    setSearch]    = useState("");
+  const [filterCat, setFilterCat] = useState("All");
+  const [filterLow, setFilterLow] = useState(false);
+
+  const categories    = ["All",...Array.from(new Set(stocks.map(s=>s.category).filter(Boolean)))];
+  const totalValue    = stocks.reduce((a,s)=>a+s.quantity*s.costPrice,0);
+  const lowStockItems = stocks.filter(s=>Number(s.quantity)<=Number(s.lowAlert||5));
+
+  const filtered = stocks
+    .filter(s=>s.name.toLowerCase().includes(search.toLowerCase())||(s.category||"").toLowerCase().includes(search.toLowerCase()))
+    .filter(s=>filterCat==="All"||s.category===filterCat)
+    .filter(s=>!filterLow||Number(s.quantity)<=Number(s.lowAlert||5));
+
+  const recentMoves = stockMovements.slice(0,20);
+
+  return (
+    <div style={S.section}>
+      {/* Download Buttons */}
+      <div style={{display:"flex",gap:10}}>
+        <button onClick={()=>downloadExcel(stocks)} style={{...S.dlBtn,background:"#166534",flex:1}}>
+          <Icon name="download" size={15} color="#fff"/>
+          <span>📊 Excel</span>
+        </button>
+        <button onClick={()=>downloadPDF(stocks,stockMovements)} style={{...S.dlBtn,background:"#b91c1c",flex:1}}>
+          <Icon name="download" size={15} color="#fff"/>
+          <span>📄 PDF</span>
+        </button>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+        <KPI label="Total Items"  value={stocks.length}              color="#1e40af" icon="📦"/>
+        <KPI label="Stock Value"  value={formatCurrency(totalValue)} color="#1d7e4a" icon="💎"/>
+        <KPI label="Low Stock"    value={lowStockItems.length}       color={lowStockItems.length>0?"#b91c1c":"#6b7280"} icon="⚠️"/>
+      </div>
+
+      {lowStockItems.length>0 && (
+        <div style={S.alertBox}>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+            <Icon name="warn" size={16} color="#92400e"/>
+            <span style={{fontWeight:700,fontSize:13,color:"#92400e"}}>Items Running Low</span>
+          </div>
+          {lowStockItems.map(s=>(
+            <div key={s.id} style={{fontSize:12,color:"#78350f",display:"flex",justifyContent:"space-between",padding:"3px 0"}}>
+              <span>{s.name}</span><span style={{fontWeight:700}}>{s.quantity} {s.unit} remaining</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={S.card}>
+        <div style={S.cardTitle}>📦 Stock Report</div>
+        <input style={{...S.input,marginBottom:8}} type="text" placeholder="🔍 Search items..." value={search} onChange={e=>setSearch(e.target.value)}/>
+        <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
+          <select style={{...S.input,marginBottom:0,flex:1}} value={filterCat} onChange={e=>setFilterCat(e.target.value)}>
+            {categories.map(c=><option key={c}>{c}</option>)}
+          </select>
+          <button style={{...S.payBtn,flex:"none",padding:"11px 14px",background:filterLow?"#b91c1c":"#e5e7eb",color:filterLow?"#fff":"#374151",fontSize:12}} onClick={()=>setFilterLow(v=>!v)}>
+            ⚠️ Low Only
+          </button>
+        </div>
+        {filtered.length===0&&<div style={S.empty}>No items match your filters.</div>}
+        {filtered.map(s=>{
+          const isLow    = Number(s.quantity)<=Number(s.lowAlert||5);
+          const stockPct = Math.min((s.quantity/Math.max(s.lowAlert*4,1))*100,100);
+          const margin   = s.sellingPrice>0&&s.costPrice>0?(((s.sellingPrice-s.costPrice)/s.sellingPrice)*100).toFixed(1):null;
+          const moves    = stockMovements.filter(m=>m.stockId===s.id);
+          const totOut   = moves.filter(m=>m.type==="out").reduce((a,m)=>a+m.qty,0);
+          const totIn    = moves.filter(m=>m.type==="in").reduce((a,m)=>a+m.qty,0);
+          return (
+            <div key={s.id} style={{...S.stockRow,borderLeft:`4px solid ${isLow?'#b91c1c':'#1d7e4a'}`,marginBottom:12}}>
+              <div style={{flex:1}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                  <span style={{fontWeight:700,fontSize:13,color:"#111827"}}>{s.name}</span>
+                  {s.category&&<span style={S.catBadge}>{s.category}</span>}
+                  {isLow&&<span style={S.lowBadge}>⚠️ Low</span>}
+                </div>
+                <div style={{marginTop:6}}>
+                  <div style={S.barBg}>
+                    <div style={{...S.barFill,width:`${stockPct}%`,background:isLow?"linear-gradient(90deg,#b91c1c,#ef4444)":"linear-gradient(90deg,#1d7e4a,#22c55e)"}}/>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:12,marginTop:5}}>
+                  <span style={{fontSize:11,color:"#1d7e4a",fontWeight:700}}>📦 IN: {totIn}</span>
+                  <span style={{fontSize:11,color:"#b91c1c",fontWeight:700}}>🛒 OUT: {totOut}</span>
+                </div>
+                <div style={{fontSize:11,color:"#6b7280",marginTop:3}}>Sell: {formatCurrency(s.sellingPrice)} {margin?`| Margin: ${margin}%`:""}</div>
+                {s.notes&&<div style={{fontSize:11,color:"#9ca3af",fontStyle:"italic",marginTop:2}}>{s.notes}</div>}
+              </div>
+              <div style={{textAlign:"right",minWidth:70}}>
+                <div style={{fontWeight:800,fontSize:16,color:isLow?"#b91c1c":"#1d7e4a"}}>{s.quantity}</div>
+                <div style={{fontSize:10,color:"#9ca3af"}}>{s.unit}</div>
+                <div style={{fontSize:10,color:"#6b7280",marginTop:2}}>Added: {s.dateAdded}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Stock Movement History */}
+      {recentMoves.length>0 && (
+        <div style={S.card}>
+          <div style={S.cardTitle}>🔄 Stock Movement History</div>
+          {recentMoves.map(m=>{
+            const stock=stocks.find(s=>s.id===m.stockId);
+            return (
+              <div key={m.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #f3f4f6"}}>
+                <div>
+                  <div style={{fontWeight:600,fontSize:13,color:"#111827"}}>{stock?.name||"—"}</div>
+                  <div style={{fontSize:11,color:"#9ca3af"}}>{m.note||"—"} • {m.date}</div>
+                </div>
+                <span style={{fontWeight:800,fontSize:14,color:m.type==="in"?"#1d7e4a":"#b91c1c",display:"flex",alignItems:"center",gap:4}}>
+                  {m.type==="in"?"📦 +":"🛒 -"}{m.qty}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Category Breakdown */}
+      {categories.filter(c=>c!=="All").length>0&&(
+        <div style={S.card}>
+          <div style={S.cardTitle}>By Category</div>
+          {categories.filter(c=>c!=="All").map(cat=>{
+            const items=stocks.filter(s=>s.category===cat);
+            const val=items.reduce((a,s)=>a+s.quantity*s.costPrice,0);
+            return (
+              <div key={cat} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #f3f4f6"}}>
+                <span style={{fontSize:13,color:"#374151",fontWeight:600}}>{cat} <span style={{color:"#9ca3af",fontWeight:400}}>({items.length} items)</span></span>
+                <span style={{fontSize:13,fontWeight:700,color:"#1e40af"}}>{formatCurrency(val)}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── FUNDS TAB (Admin) ────────────────────────────────────────────────────────
+const FUND_TYPES = ["Opening Balance","Bank Loan","Borrowed from Person","Own Investment","Other"];
+
+function FundsTab({ funds, onAdd, onDelete, sales, expenses, isAdmin }) {
+  const emptyForm = { type:"Opening Balance", amount:"", source:"", date:today(), note:"" };
+  const [form, setForm] = useState(emptyForm);
+
+  const totalFundsIn  = funds.reduce((a,f)=>a+Number(f.amount),0);
+  const totalSales    = sales.reduce((a,s)=>a+s.amount,0);
+  const totalExpenses = expenses.reduce((a,e)=>a+e.amount,0);
+  const netProfit     = totalSales - totalExpenses;
+  const currentBalance = totalFundsIn + netProfit;  // funds in + net earnings
+
+  // Cash flow timeline — merge funds, sales, expenses sorted by date desc
+  const allEvents = [
+    ...funds.map(f=>({...f, evType:"fund",   label:f.source||f.type,      color:"#7c3aed", sign:"+", amount:Number(f.amount)})),
+    ...sales.map(s=>({...s, evType:"sale",   label:s.purchaser||"Sale",   color:"#1d7e4a", sign:"+"})),
+    ...expenses.map(e=>({...e,evType:"expense",label:e.description||e.category,color:"#b91c1c",sign:"-"})),
+  ].sort((a,b)=>new Date(b.date)-new Date(a.date));
+
+  const handleAdd = () => {
+    if (!form.amount || isNaN(form.amount) || Number(form.amount)<=0) return;
+    onAdd({...form, amount:Number(form.amount)});
+    setForm(emptyForm);
+  };
+
+  const typeColors = {
+    "Opening Balance":"#1e40af","Bank Loan":"#7c3aed","Borrowed from Person":"#d97706",
+    "Own Investment":"#0891b2","Other":"#6b7280"
+  };
+
+  return (
+    <div style={S.section}>
+      {/* KPI cards */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <KPI label="Total Funds IN"   value={formatCurrency(totalFundsIn)}   color="#7c3aed" icon="🏦"/>
+        <KPI label="Current Balance"  value={formatCurrency(currentBalance)} color={currentBalance>=0?"#1d7e4a":"#b91c1c"} icon="💵"/>
+        <KPI label="Total Revenue"    value={formatCurrency(totalSales)}     color="#1e40af" icon="💰"/>
+        <KPI label="Total Expenses"   value={formatCurrency(totalExpenses)}  color="#b91c1c" icon="📤"/>
+      </div>
+
+      {/* Balance summary card */}
+      <div style={{...S.card,background:"linear-gradient(135deg,#1e3a8a,#1e40af)",color:"#fff"}}>
+        <div style={{fontSize:12,opacity:0.8,marginBottom:4}}>FUNDS FLOW SUMMARY</div>
+        <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid rgba(255,255,255,0.15)"}}>
+          <span style={{fontSize:13}}>Opening + Borrowed Funds</span>
+          <span style={{fontWeight:700}}>+{formatCurrency(totalFundsIn)}</span>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid rgba(255,255,255,0.15)"}}>
+          <span style={{fontSize:13}}>Sales Revenue</span>
+          <span style={{fontWeight:700}}>+{formatCurrency(totalSales)}</span>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid rgba(255,255,255,0.15)"}}>
+          <span style={{fontSize:13}}>Total Expenses</span>
+          <span style={{fontWeight:700,color:"#fca5a5"}}>-{formatCurrency(totalExpenses)}</span>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",padding:"10px 0 0"}}>
+          <span style={{fontSize:14,fontWeight:800}}>Net Balance</span>
+          <span style={{fontSize:16,fontWeight:900,color:currentBalance>=0?"#86efac":"#fca5a5"}}>
+            {currentBalance>=0?"▲":"▼"} {formatCurrency(Math.abs(currentBalance))}
+          </span>
+        </div>
+      </div>
+
+      {/* Add fund entry — Admin only */}
+      {isAdmin && (
+        <div style={S.card}>
+          <div style={S.cardTitle}>🏦 Add Fund Entry</div>
+          <select style={S.input} value={form.type} onChange={e=>setForm({...form,type:e.target.value})}>
+            {FUND_TYPES.map(t=><option key={t}>{t}</option>)}
+          </select>
+          <input style={S.input} type="number" placeholder="Amount (₹) *"              value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})}/>
+          <input style={S.input} type="text"   placeholder="Source (e.g. SBI Bank / Ravi)" value={form.source} onChange={e=>setForm({...form,source:e.target.value})}/>
+          <input style={S.input} type="date"   value={form.date}                        onChange={e=>setForm({...form,date:e.target.value})}/>
+          <input style={S.input} type="text"   placeholder="Note (optional)"            value={form.note}   onChange={e=>setForm({...form,note:e.target.value})}/>
+          <button style={{...S.btnPrimary,background:"#7c3aed"}} onClick={handleAdd}>+ Add Fund Entry</button>
+        </div>
+      )}
+
+      {/* Fund entries list */}
+      {funds.length>0 && (
+        <div style={S.card}>
+          <div style={S.cardTitle}>Fund Entries ({funds.length})</div>
+          {funds.map(f=>(
+            <div key={f.id} style={{...S.listRow,gap:8}}>
+              <div style={{width:6,height:40,borderRadius:3,background:typeColors[f.type]||"#6b7280",flexShrink:0}}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:700,fontSize:13,color:"#111827"}}>{f.source||f.type}</div>
+                <div style={{fontSize:11,color:"#9ca3af"}}>{f.type} • {f.date}</div>
+                {f.note&&<div style={{fontSize:11,color:"#6b7280",fontStyle:"italic"}}>{f.note}</div>}
+              </div>
+              <div style={{textAlign:"right",flexShrink:0}}>
+                <div style={{fontWeight:800,color:"#7c3aed",fontSize:14}}>+{formatCurrency(f.amount)}</div>
+                {isAdmin && <button style={{...S.actionBtn,background:"#fee2e2",color:"#b91c1c",marginTop:4}} onClick={()=>onDelete(f.id)}>🗑️</button>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Cash flow timeline */}
+      <div style={S.card}>
+        <div style={S.cardTitle}>📊 Cash Flow Timeline</div>
+        {allEvents.length===0 && <div style={S.empty}>No entries yet. Add funds, record sales and expenses to see the flow.</div>}
+        {allEvents.slice(0,30).map((ev,i)=>(
+          <div key={`${ev.evType}-${ev.id}-${i}`} style={{display:"flex",gap:10,padding:"8px 0",borderBottom:"1px solid #f3f4f6",alignItems:"center"}}>
+            <div style={{width:8,height:8,borderRadius:"50%",background:ev.color,flexShrink:0,marginTop:2}}/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:600,fontSize:12,color:"#111827",textTransform:"capitalize"}}>{ev.evType==="fund"?"🏦 Fund":ev.evType==="sale"?"🛒 Sale":"📤 Expense"} — {ev.label}</div>
+              <div style={{fontSize:10,color:"#9ca3af"}}>{ev.date}</div>
+            </div>
+            <span style={{fontWeight:800,fontSize:13,color:ev.color,flexShrink:0}}>
+              {ev.sign}{formatCurrency(ev.amount)}
+            </span>
+          </div>
+        ))}
+        {allEvents.length>30&&<div style={{fontSize:12,color:"#9ca3af",textAlign:"center",paddingTop:8}}>Showing latest 30 of {allEvents.length} entries</div>}
+      </div>
+    </div>
+  );
+}
+
+// ─── OVERALL REPORT ────────────────────────────────────────────────────────────
+function Report({ totalSales, totalExpenses, netProfit, expenseByCategory, sales, expenses }) {
+  const profitMargin = totalSales>0?((netProfit/totalSales)*100).toFixed(1):0;
+  const paidSales    = sales.filter(s=>s.paymentStatus==="Paid").reduce((a,b)=>a+b.amount,0);
+  const unpaidSales  = sales.filter(s=>s.paymentStatus!=="Paid").reduce((a,b)=>a+b.amount,0);
+  return (
+    <div style={S.section}>
+      {/* Download Buttons */}
+      <div style={{display:"flex",gap:10}}>
+        <button onClick={()=>downloadReportExcel(sales,expenses,expenseByCategory)} style={{...S.dlBtn,background:"#166534",flex:1}}>
+          <Icon name="download" size={15} color="#fff"/><span>📊 Excel</span>
+        </button>
+        <button onClick={()=>downloadReportPDF(sales,expenses,expenseByCategory)} style={{...S.dlBtn,background:"#b91c1c",flex:1}}>
+          <Icon name="download" size={15} color="#fff"/><span>📄 PDF</span>
+        </button>
+      </div>
+      <div style={S.card}>
+        <div style={S.cardTitle}>Financial Summary</div>
+        <ReportRow label="Total Revenue"     value={formatCurrency(totalSales)}    color="#1d7e4a"/>
+        <ReportRow label="  └ Collected"     value={formatCurrency(paidSales)}     color="#16a34a"/>
+        <ReportRow label="  └ Pending"       value={formatCurrency(unpaidSales)}   color="#dc2626"/>
+        <ReportRow label="Total Expenses"    value={formatCurrency(totalExpenses)} color="#b91c1c"/>
+        <div style={{borderTop:"2px solid #e5e7eb",margin:"10px 0"}}/>
+        <ReportRow label="Net Profit / Loss" value={formatCurrency(netProfit)}     color={netProfit>=0?"#1d7e4a":"#b91c1c"} bold/>
+        <ReportRow label="Profit Margin"     value={`${profitMargin}%`}            color="#1e40af"/>
+      </div>
+      <div style={S.card}>
+        <div style={S.cardTitle}>Expense Categories</div>
+        {expenseByCategory.map(({cat,total})=><ReportRow key={cat} label={cat} value={formatCurrency(total)} color="#374151"/>)}
+      </div>
+      <div style={S.card}>
+        <div style={S.cardTitle}>Transaction Count</div>
+        <ReportRow label="Sales Transactions"   value={sales.length}    color="#1d7e4a"/>
+        <ReportRow label="Expense Transactions" value={expenses.length} color="#b91c1c"/>
+      </div>
+    </div>
+  );
+}
+
+// ─── MONTHLY REPORT ────────────────────────────────────────────────────────────
+function MonthlyReport({ sales, expenses }) {
+  const now = new Date();
+  const [selMonth, setSelMonth] = useState(now.getMonth());
+  const [selYear,  setSelYear]  = useState(now.getFullYear());
+
+  const years = Array.from(new Set([now.getFullYear(),now.getFullYear()-1,...sales.map(s=>new Date(s.date).getFullYear()),...expenses.map(e=>new Date(e.date).getFullYear())])).sort((a,b)=>b-a);
+  const mSales    = sales.filter(s=>{const d=new Date(s.date);return d.getMonth()===selMonth&&d.getFullYear()===selYear;});
+  const mExpenses = expenses.filter(e=>{const d=new Date(e.date);return d.getMonth()===selMonth&&d.getFullYear()===selYear;});
+  const mTotal    = mSales.reduce((a,b)=>a+b.amount,0);
+  const mExp      = mExpenses.reduce((a,b)=>a+b.amount,0);
+  const mProfit   = mTotal-mExp;
+  const mPaid     = mSales.filter(s=>s.paymentStatus==="Paid").reduce((a,b)=>a+b.amount,0);
+  const mUnpaid   = mSales.filter(s=>s.paymentStatus!=="Paid").reduce((a,b)=>a+b.amount,0);
+  const mMargin   = mTotal>0?((mProfit/mTotal)*100).toFixed(1):0;
+  const mExpByCat = EXPENSE_CATEGORIES.map(cat=>({cat,total:mExpenses.filter(e=>e.category===cat).reduce((a,b)=>a+b.amount,0)}));
+  const maxCat    = Math.max(...mExpByCat.map(e=>e.total),1);
+  const monthLabel = `${MONTHS[selMonth]} ${selYear}`;
+
+  return (
+    <div style={S.section}>
+      <div style={S.card}>
+        <div style={S.cardTitle}>📅 Monthly Report</div>
+        <div style={{display:"flex",gap:10}}>
+          <select style={{...S.input,marginBottom:0,flex:2}} value={selMonth} onChange={e=>setSelMonth(Number(e.target.value))}>
+            {MONTHS.map((m,i)=><option key={i} value={i}>{m}</option>)}
+          </select>
+          <select style={{...S.input,marginBottom:0,flex:1}} value={selYear} onChange={e=>setSelYear(Number(e.target.value))}>
+            {years.map(y=><option key={y} value={y}>{y}</option>)}
+          </select>
+        </div>
+        <div style={{marginTop:10,textAlign:"center",fontSize:13,color:"#6b7280",fontWeight:600}}>{monthLabel}</div>
+      </div>
+      <div style={S.kpiGrid}>
+        <KPI label="Sales"    value={formatCurrency(mTotal)}  color="#1e40af" icon="💰"/>
+        <KPI label="Expenses" value={formatCurrency(mExp)}    color="#b91c1c" icon="📤"/>
+        <KPI label="Profit"   value={formatCurrency(mProfit)} color={mProfit>=0?"#1d7e4a":"#b91c1c"} icon="📈"/>
+      </div>
+      <div style={S.card}>
+        <div style={S.cardTitle}>Summary — {monthLabel}</div>
+        <ReportRow label="Total Revenue"     value={formatCurrency(mTotal)}  color="#1d7e4a"/>
+        <ReportRow label="  └ Collected"     value={formatCurrency(mPaid)}   color="#16a34a"/>
+        <ReportRow label="  └ Pending"       value={formatCurrency(mUnpaid)} color="#dc2626"/>
+        <ReportRow label="Total Expenses"    value={formatCurrency(mExp)}    color="#b91c1c"/>
+        <div style={{borderTop:"2px solid #e5e7eb",margin:"10px 0"}}/>
+        <ReportRow label="Net Profit / Loss" value={formatCurrency(mProfit)} color={mProfit>=0?"#1d7e4a":"#b91c1c"} bold/>
+        <ReportRow label="Profit Margin"     value={`${mMargin}%`}          color="#1e40af"/>
+        <ReportRow label="Sales Count"       value={mSales.length}           color="#374151"/>
+        <ReportRow label="Expense Count"     value={mExpenses.length}        color="#374151"/>
+      </div>
+      <div style={S.card}>
+        <div style={S.cardTitle}>Expense Breakdown</div>
+        {mExpByCat.every(e=>e.total===0)?<div style={S.empty}>No expenses this month.</div>:mExpByCat.map(({cat,total})=>(
+          <div key={cat} style={{marginBottom:10}}>
+            <div style={S.barLabel}>
+              <span style={{color:"#374151",fontWeight:600,fontSize:13}}>{cat}</span>
+              <span style={{color:"#b91c1c",fontWeight:700,fontSize:13}}>{formatCurrency(total)}</span>
+            </div>
+            <div style={S.barBg}><div style={{...S.barFillRed,width:`${(total/maxCat)*100}%`}}/></div>
+          </div>
+        ))}
+      </div>
+      <div style={S.card}>
+        <div style={S.cardTitle}>Sales This Month ({mSales.length})</div>
+        {mSales.length===0&&<div style={S.empty}>No sales this month.</div>}
+        {mSales.map(s=>(
+          <div key={s.id} style={{...S.listRow,flexDirection:"column",alignItems:"flex-start",gap:4}}>
+            <div style={{display:"flex",justifyContent:"space-between",width:"100%"}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:13,color:"#111827"}}>{s.purchaser||"—"}</div>
+                <div style={{fontSize:11,color:"#9ca3af"}}>
+                  {s.mobile?`📱 ${s.mobile} • `:""}{s.description||"Sale"} • {s.date}
+                </div>
+              </div>
+              <span style={{fontWeight:700,color:"#1d7e4a"}}>+{formatCurrency(s.amount)}</span>
+            </div>
+            <span style={{fontSize:11,fontWeight:700,padding:"2px 10px",borderRadius:12,background:s.paymentStatus==="Paid"?"#dcfce7":"#fee2e2",color:s.paymentStatus==="Paid"?"#166534":"#b91c1c"}}>
+              {s.paymentStatus==="Paid"?"✅ Paid":"❌ Not Paid"}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div style={S.card}>
+        <div style={S.cardTitle}>Expenses This Month ({mExpenses.length})</div>
+        {mExpenses.length===0&&<div style={S.empty}>No expenses this month.</div>}
+        {mExpenses.map(e=>(
+          <div key={e.id} style={S.listRow}>
+            <div>
+              <div style={{fontWeight:600,fontSize:13,color:"#111827"}}>{e.description||e.category}</div>
+              <div style={{fontSize:11,color:"#9ca3af"}}>{e.category} • {e.date}</div>
+            </div>
+            <span style={{fontWeight:700,color:"#b91c1c"}}>-{formatCurrency(e.amount)}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Download buttons inline at bottom ── */}
+      <div style={S.card}>
+        <div style={S.cardTitle}>⬇ Download {monthLabel} Report</div>
+        <div style={{display:"flex",gap:10,marginTop:4}}>
+          <button onClick={()=>downloadMonthlyExcel(mSales,mExpenses,mExpByCat,monthLabel)} style={{...S.dlBtn,background:"#166534",flex:1}}>
+            <Icon name="download" size={15} color="#fff"/><span>📊 Excel</span>
+          </button>
+          <button onClick={()=>downloadMonthlyPDF(mSales,mExpenses,mExpByCat,monthLabel)} style={{...S.dlBtn,background:"#b91c1c",flex:1}}>
+            <Icon name="download" size={15} color="#fff"/><span>📄 PDF</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReportRow({ label, value, color, bold }) {
+  return (
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #f3f4f6"}}>
+      <span style={{fontSize:13,color:"#6b7280",fontWeight:bold?700:400}}>{label}</span>
+      <span style={{fontSize:14,fontWeight:bold?800:700,color}}>{value}</span>
+    </div>
+  );
+}
+
+// ─── STYLES ────────────────────────────────────────────────────────────────────
+const S = {
+  app:        { fontFamily:"'Segoe UI',system-ui,sans-serif", background:"#f0f4ff", height:"100dvh", maxWidth:430, margin:"0 auto", display:"flex", flexDirection:"column", position:"relative", overflow:"hidden" },
+  header:     { background:"linear-gradient(135deg,#1e3a8a 0%,#1e40af 60%,#2563eb 100%)", padding:"14px 16px 10px", boxShadow:"0 4px 20px rgba(30,64,175,0.3)" },
+  headerInner:{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 },
+  logo:       { display:"flex", alignItems:"center", gap:10 },
+  logoIcon:   { fontSize:26 },
+  logoName:   { color:"#fff", fontWeight:800, fontSize:18, letterSpacing:"-0.5px" },
+  logoSub:    { color:"#93c5fd", fontSize:10, fontWeight:500 },
+  roleBadge:  { padding:"4px 10px", borderRadius:20, color:"#fff", fontWeight:700, fontSize:11 },
+  logoutBtn:  { background:"rgba(255,255,255,0.15)", border:"none", borderRadius:8, cursor:"pointer", padding:"6px 8px", display:"flex", alignItems:"center", justifyContent:"center" },
+  profitBar:  { display:"flex", justifyContent:"space-between", alignItems:"center" },
+  headerBadge:{ padding:"4px 12px", borderRadius:20, color:"#fff", fontWeight:700, fontSize:12 },
+  notification:{ position:"fixed", top:90, left:"50%", transform:"translateX(-50%)", color:"#fff", padding:"10px 24px", borderRadius:24, fontWeight:600, fontSize:13, zIndex:100, boxShadow:"0 4px 20px rgba(0,0,0,0.2)", whiteSpace:"nowrap" },
+  content:    { flex:1, width:"100%", overflowY:"auto", overflowX:"hidden", paddingBottom:16, WebkitOverflowScrolling:"touch" },
+  section:    { padding:"16px 14px", display:"flex", flexDirection:"column", gap:14, minHeight:"100%", width:"100%", boxSizing:"border-box" },
+  kpiGrid:    { display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 },
+  kpiCard:    { background:"#fff", borderRadius:14, padding:"12px 8px", textAlign:"center", boxShadow:"0 2px 12px rgba(0,0,0,0.07)" },
+  kpiIcon:    { fontSize:18, marginBottom:4 },
+  card:       { background:"#fff", borderRadius:16, padding:"16px", boxShadow:"0 2px 12px rgba(0,0,0,0.07)" },
+  cardTitle:  { fontWeight:800, fontSize:15, color:"#111827", marginBottom:14, borderBottom:"2px solid #eff6ff", paddingBottom:8 },
+  input:      { width:"100%", padding:"11px 14px", borderRadius:10, border:"1.5px solid #e5e7eb", fontSize:14, marginBottom:10, outline:"none", background:"#f9fafb", boxSizing:"border-box", color:"#111827" },
+  btnPrimary: { width:"100%", padding:"13px", background:"#1e40af", color:"#fff", border:"none", borderRadius:12, fontWeight:700, fontSize:15, cursor:"pointer", marginTop:2 },
+  listRow:    { display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 0", borderBottom:"1px solid #f3f4f6" },
+  rowRight:   { display:"flex", alignItems:"center", gap:6 },
+  actionBtn:  { border:"none", borderRadius:6, cursor:"pointer", padding:"4px 7px", fontSize:13 },
+  editBox:    { background:"#f0f4ff", borderRadius:12, padding:12, marginBottom:10, border:"1.5px solid #bfdbfe" },
+  btnSm:      { flex:1, padding:"9px", border:"none", borderRadius:8, fontWeight:700, fontSize:13, cursor:"pointer" },
+  barLabel:   { display:"flex", justifyContent:"space-between", marginBottom:4 },
+  barBg:      { background:"#eff6ff", borderRadius:8, height:8, overflow:"hidden" },
+  barFill:    { background:"linear-gradient(90deg,#1e40af,#3b82f6)", height:"100%", borderRadius:8, transition:"width 0.4s" },
+  barFillRed: { background:"linear-gradient(90deg,#b91c1c,#ef4444)", height:"100%", borderRadius:8, transition:"width 0.4s" },
+  activityRow:{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:"1px solid #f3f4f6" },
+  empty:      { color:"#9ca3af", fontSize:13, textAlign:"center", padding:"16px 0" },
+  alertBox:   { background:"#fef3c7", border:"1.5px solid #f59e0b", borderRadius:14, padding:"12px 14px" },
+  stockRow:   { display:"flex", justifyContent:"space-between", alignItems:"flex-start", padding:"10px 12px", marginBottom:8, borderRadius:10, background:"#f9fafb", gap:10 },
+  catBadge:   { fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:10, background:"#eff6ff", color:"#1e40af" },
+  lowBadge:   { fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:10, background:"#fee2e2", color:"#b91c1c" },
+  nav:        { flexShrink:0, background:"#fff", borderTop:"1px solid #e5e7eb", display:"flex", boxShadow:"0 -4px 20px rgba(0,0,0,0.08)" },
+  navBtn:     { flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"10px 0", background:"none", border:"none", cursor:"pointer", gap:2 },
+  navBtnActive:{ background:"#eff6ff" },
+  navLabel:   { fontSize:9, fontWeight:600 },
+  payBtn:     { flex:1, padding:"10px", border:"none", borderRadius:10, fontWeight:700, fontSize:13, cursor:"pointer" },
+  dlBtn:      { display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"13px", border:"none", borderRadius:12, fontWeight:700, fontSize:14, cursor:"pointer", color:"#fff" },
+  dlBar:      { position:"fixed", bottom:58, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:430, background:"linear-gradient(135deg,#1e3a8a,#1e40af)", padding:"10px 14px 12px", boxShadow:"0 -4px 20px rgba(30,64,175,0.35)", zIndex:50, boxSizing:"border-box" },
+};
+
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+
+    setTimeout(() => {
+      const splash = document.getElementById('splash');
+      if (splash) { splash.style.transition='opacity 0.5s ease'; splash.style.opacity='0'; setTimeout(()=>splash.remove(),500); }
+    }, 1800);
+  </script>
+
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(err => console.log('SW error:', err));
+      });
+    }
+  </script>
+</body>
+</html>

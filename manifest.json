@@ -1,0 +1,33 @@
+{
+  "name": "Red Nectar Business Tracker",
+  "short_name": "Red Nectar",
+  "description": "Sales, Stock, Expenses & Funds tracker for Red Nectar",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1e3a8a",
+  "theme_color": "#1e3a8a",
+  "lang": "en-IN",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "finance", "productivity"],
+  "shortcuts": [
+    {
+      "name": "Dashboard",
+      "url": "/",
+      "description": "Open Red Nectar Dashboard"
+    }
+  ]
+}
