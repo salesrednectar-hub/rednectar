@@ -15,9 +15,9 @@
   <link rel="apple-touch-icon" href="icon-192.png"/>
 
   <!-- React + Babel -->
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 
   <!-- Firebase SDK v8 (compat — simplest for inline scripts) -->
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
@@ -877,6 +877,8 @@ function App() {
     });
     console.log(`✅ Patched ${needsPatch.length} old sale records with stockName`);
   }, [sales, stocks]);
+
+  if (!currentUser) return <LoginScreen onLogin={setCurrentUser} />;
 
   return (
     <MainApp
@@ -2263,6 +2265,21 @@ const S = {
   </script>
 
   <script>
+    // Detect if app failed to render (blank page) and show helpful error
+    setTimeout(() => {
+      const root = document.getElementById('root');
+      if (root && root.children.length === 0) {
+        document.getElementById('splash').innerHTML = `
+          <img src="icon-192.png" style="width:80px;height:80px;object-fit:contain;margin-bottom:8px"/>
+          <div style="font-size:20px;font-weight:900">Red Nectar</div>
+          <div style="font-size:13px;opacity:0.8;margin-top:4px">Loading... please wait</div>
+          <div style="width:40px;height:40px;border:4px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 0.8s linear infinite;margin-top:16px"></div>
+          <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+          <div style="font-size:11px;opacity:0.6;margin-top:24px;max-width:280px;text-align:center">If this persists, check your internet connection and reload</div>
+          <button onclick="location.reload()" style="margin-top:16px;padding:10px 28px;background:#fff;color:#1e3a8a;border:none;border-radius:20px;font-weight:700;font-size:14px;cursor:pointer">🔄 Reload</button>`;
+      }
+    }, 6000);
+
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('sw.js').catch(err => console.log('SW error:', err));
