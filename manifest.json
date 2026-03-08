@@ -2,7 +2,8 @@
   "name": "Red Nectar Business Tracker",
   "short_name": "Red Nectar",
   "description": "Sales, Stock, Expenses & Funds tracker for Red Nectar",
-  "start_url": "/",
+  "start_url": "/rednectar/",
+  "scope": "/rednectar/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#1e3a8a",
@@ -26,7 +27,7 @@
   "shortcuts": [
     {
       "name": "Dashboard",
-      "url": "/",
+      "url": "/rednectar/",
       "description": "Open Red Nectar Dashboard"
     }
   ]
