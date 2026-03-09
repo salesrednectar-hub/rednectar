@@ -1023,12 +1023,14 @@ function MainApp({ currentUser, onLogout, sales, setSales, expenses, setExpenses
   };
 
   const activeSales   = sales.filter(s => s.status !== "deleted");
+  const activeExpenses = expenses.filter(e => e.status !== "deleted");
+  const activeFunds    = funds.filter(f => f.status !== "deleted");
   const totalSales    = activeSales.reduce((a,b) => a + b.amount - (b.returnAmt||0), 0);
-  const totalExpenses = expenses.reduce((a,b) => a+b.amount, 0);
+  const totalExpenses = activeExpenses.reduce((a,b) => a+b.amount, 0);
   const netProfit     = totalSales - totalExpenses;
 
   const expenseByCategory = EXPENSE_CATEGORIES.map(cat => ({
-    cat, total: expenses.filter(e => e.category===cat).reduce((a,b) => a+b.amount, 0)
+    cat, total: activeExpenses.filter(e => e.category===cat).reduce((a,b) => a+b.amount, 0)
   }));
 
   // ── Stock movement helpers ────────────────────────────────────────────────
@@ -1156,9 +1158,12 @@ function MainApp({ currentUser, onLogout, sales, setSales, expenses, setExpenses
     setEditingExpense(null);
     notify("Expense updated!");
   };
-  const deleteExpense = (id) => {
-    if (firebaseReady) db.collection(COL.expenses).doc(String(id)).delete().catch(console.error);
-    else setExpenses(expenses.filter(e => e.id!==id));
+  const deleteExpense = (id, remark) => {
+    const exp = expenses.find(e => e.id === id);
+    if (!exp) return;
+    const updated = { ...exp, status:"deleted", deleteRemark:remark, deletedAt:today() };
+    if (firebaseReady) db.collection(COL.expenses).doc(String(id)).set(updated).catch(console.error);
+    else setExpenses(expenses.map(e => e.id===id ? updated : e));
     notify("Expense deleted","error");
   };
 
@@ -1176,15 +1181,13 @@ function MainApp({ currentUser, onLogout, sales, setSales, expenses, setExpenses
     else setStocks(stocks.map(s=>s.id===id?merged:s));
     notify("Stock updated!");
   };
-  const deleteStock = (id) => {
-    if (firebaseReady) {
-      db.collection(COL.stocks).doc(String(id)).delete().catch(console.error);
-      stockMovements.filter(m=>m.stockId===id).forEach(m=>db.collection(COL.movements).doc(String(m.id)).delete().catch(console.error));
-    } else {
-      setStocks(stocks.filter(s=>s.id!==id));
-      setStockMovements(stockMovements.filter(m=>m.stockId!==id));
-    }
-    notify("Stock deleted","error");
+  const deleteStock = (id, remark) => {
+    const stk = stocks.find(s => s.id === id);
+    if (!stk) return;
+    const updated = { ...stk, status:"deleted", deleteRemark:remark, deletedAt:today() };
+    if (firebaseReady) db.collection(COL.stocks).doc(String(id)).set(updated).catch(console.error);
+    else setStocks(stocks.map(s => s.id===id ? updated : s));
+    notify("Stock item deleted","error");
   };
 
   // ── Funds CRUD ────────────────────────────────────────────────────────────
@@ -1195,9 +1198,12 @@ function MainApp({ currentUser, onLogout, sales, setSales, expenses, setExpenses
     else setFunds([newFund, ...funds]);
     notify("Fund entry added!");
   };
-  const deleteFund = (id) => {
-    if (firebaseReady) db.collection(COL.funds).doc(String(id)).delete().catch(console.error);
-    else setFunds(funds.filter(f=>f.id!==id));
+  const deleteFund = (id, remark) => {
+    const fund = funds.find(f => f.id === id);
+    if (!fund) return;
+    const updated = { ...fund, status:"deleted", deleteRemark:remark, deletedAt:today() };
+    if (firebaseReady) db.collection(COL.funds).doc(String(id)).set(updated).catch(console.error);
+    else setFunds(funds.map(f => f.id===id ? updated : f));
     notify("Fund entry deleted","error");
   };
 
@@ -1273,16 +1279,16 @@ function MainApp({ currentUser, onLogout, sales, setSales, expenses, setExpenses
       )}
 
       <div style={S.content}>
-        {activeTab==="dashboard" && <Dashboard totalSales={totalSales} totalExpenses={totalExpenses} netProfit={netProfit} expenseByCategory={expenseByCategory} sales={activeSales} expenses={expenses} stocks={stocks} stockMovements={stockMovements} funds={funds}/>}
-        {activeTab==="sales"     && isAdmin && <SalesTab sales={sales} form={saleForm} onChange={p=>setSaleForm({...saleForm,...p})} onAdd={addSale} onDelete={deleteSale} onReturn={returnSale} editingSale={editingSale} setEditingSale={setEditingSale} onSaveEdit={saveSaleEdit} stocks={stocks}/>}
+        {activeTab==="dashboard" && <Dashboard totalSales={totalSales} totalExpenses={totalExpenses} netProfit={netProfit} expenseByCategory={expenseByCategory} sales={activeSales} expenses={activeExpenses} stocks={stocks.filter(s=>s.status!=="deleted")} stockMovements={stockMovements} funds={activeFunds}/>}
+        {activeTab==="sales"     && isAdmin && <SalesTab sales={sales} form={saleForm} onChange={p=>setSaleForm({...saleForm,...p})} onAdd={addSale} onDelete={deleteSale} onReturn={returnSale} editingSale={editingSale} setEditingSale={setEditingSale} onSaveEdit={saveSaleEdit} stocks={stocks.filter(s=>s.status!=="deleted")}/>}
         {activeTab==="expenses"  && isAdmin && <ExpensesTab expenses={expenses} form={expenseForm} onChange={p=>setExpenseForm({...expenseForm,...p})} onAdd={addExpense} onDelete={deleteExpense} editingExpense={editingExpense} setEditingExpense={setEditingExpense} onSaveEdit={saveExpenseEdit}/>}
         {activeTab==="stock"     && (isAdmin
           ? <StockEntry stocks={stocks} onAdd={addStock} onUpdate={updateStock} onDelete={deleteStock} stockMovements={stockMovements} onStockIn={recordStockIn}/>
-          : <StockReport stocks={stocks} stockMovements={stockMovements}/>
+          : <StockReport stocks={stocks.filter(s=>s.status!=="deleted")} stockMovements={stockMovements}/>
         )}
-        {activeTab==="funds"    && <FundsTab funds={funds} onAdd={isAdmin?addFund:null} onDelete={isAdmin?deleteFund:null} sales={activeSales} expenses={expenses} isAdmin={isAdmin}/>}
-        {activeTab==="report"   && <Report totalSales={totalSales} totalExpenses={totalExpenses} netProfit={netProfit} expenseByCategory={expenseByCategory} sales={activeSales} expenses={expenses} stocks={stocks}/>}
-        {activeTab==="monthly"  && <MonthlyReport sales={activeSales} expenses={expenses} stocks={stocks}/>}
+        {activeTab==="funds"    && <FundsTab funds={funds} onAdd={isAdmin?addFund:null} onDelete={isAdmin?deleteFund:null} sales={activeSales} expenses={activeExpenses} isAdmin={isAdmin}/>}
+        {activeTab==="report"   && <Report totalSales={totalSales} totalExpenses={totalExpenses} netProfit={netProfit} expenseByCategory={expenseByCategory} sales={activeSales} expenses={activeExpenses} stocks={stocks.filter(s=>s.status!=="deleted")}/>}
+        {activeTab==="monthly"  && <MonthlyReport sales={activeSales} expenses={activeExpenses} stocks={stocks.filter(s=>s.status!=="deleted")}/>}
       </div>
 
       <div style={S.nav}>
@@ -1627,11 +1633,43 @@ function SalesTab({ sales, form, onChange, onAdd, onDelete, onReturn, editingSal
 
 // ─── EXPENSES TAB (Admin) ──────────────────────────────────────────────────────
 function ExpensesTab({ expenses, form, onChange, onAdd, onDelete, editingExpense, setEditingExpense, onSaveEdit }) {
-  const [editForm, setEditForm] = useState({});
+  const [editForm,      setEditForm]     = useState({});
+  const [deleteModal,   setDeleteModal]  = useState(null);
+  const [deleteRemark,  setDeleteRemark] = useState("");
   const startEdit  = e => { setEditingExpense(e.id); setEditForm({amount:e.amount,category:e.category,description:e.description,date:e.date}); };
   const cancelEdit = () => setEditingExpense(null);
+  const openDelete = e => { setDeleteModal(e); setDeleteRemark(""); };
+  const confirmDelete = () => {
+    if (!deleteRemark.trim()) return;
+    onDelete(deleteModal.id, deleteRemark.trim());
+    setDeleteModal(null); setDeleteRemark("");
+  };
+  const activeExp  = expenses.filter(e => e.status !== "deleted");
+  const deletedExp = expenses.filter(e => e.status === "deleted");
+
   return (
     <div style={S.section}>
+
+      {/* Delete Modal */}
+      {deleteModal && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:360,boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+            <div style={{fontSize:16,fontWeight:800,color:"#b91c1c",marginBottom:4}}>🗑️ Confirm Delete</div>
+            <div style={{fontSize:13,color:"#374151",marginBottom:4}}><strong>{deleteModal.description||deleteModal.category}</strong> — {formatCurrency(deleteModal.amount)}</div>
+            <div style={{fontSize:11,color:"#6b7280",marginBottom:14}}>⚠️ This expense will be kept in records as deleted.</div>
+            <div style={{fontSize:12,fontWeight:700,color:"#374151",marginBottom:6}}>Reason for deletion <span style={{color:"#b91c1c"}}>*</span></div>
+            <textarea style={{...S.input,height:80,resize:"none",fontSize:13}}
+              placeholder="Mandatory: Enter reason (e.g. Wrong entry, Duplicate...)"
+              value={deleteRemark} onChange={e=>setDeleteRemark(e.target.value)}/>
+            {!deleteRemark.trim() && <div style={{fontSize:11,color:"#b91c1c",marginBottom:8}}>⚠ Reason is mandatory</div>}
+            <div style={{display:"flex",gap:8,marginTop:4}}>
+              <button style={{...S.btnPrimary,background:"#b91c1c",flex:1,opacity:deleteRemark.trim()?1:0.5}} onClick={confirmDelete}>Delete</button>
+              <button style={{...S.btnPrimary,background:"#6b7280",flex:1}} onClick={()=>setDeleteModal(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={S.card}>
         <div style={S.cardTitle}>Record Expense</div>
         <input style={S.input} type="number" placeholder="Amount (₹)" value={form.amount} onChange={e=>onChange({amount:e.target.value})}/>
@@ -1642,10 +1680,11 @@ function ExpensesTab({ expenses, form, onChange, onAdd, onDelete, editingExpense
         <input style={S.input} type="date" value={form.date} onChange={e=>onChange({date:e.target.value})}/>
         <button style={{...S.btnPrimary,background:"#b91c1c"}} onClick={onAdd}>+ Add Expense</button>
       </div>
+
       <div style={S.card}>
-        <div style={S.cardTitle}>Expense History ({expenses.length})</div>
-        {expenses.length===0 && <div style={S.empty}>No expenses recorded yet.</div>}
-        {expenses.map(e => editingExpense===e.id ? (
+        <div style={S.cardTitle}>Expense History ({activeExp.length})</div>
+        {activeExp.length===0 && <div style={S.empty}>No expenses recorded yet.</div>}
+        {activeExp.map(e => editingExpense===e.id ? (
           <div key={e.id} style={S.editBox}>
             <input style={S.input} type="number" value={editForm.amount} onChange={ev=>setEditForm({...editForm,amount:ev.target.value})}/>
             <select style={S.input} value={editForm.category} onChange={ev=>setEditForm({...editForm,category:ev.target.value})}>
@@ -1667,10 +1706,28 @@ function ExpensesTab({ expenses, form, onChange, onAdd, onDelete, editingExpense
             <div style={S.rowRight}>
               <span style={{fontWeight:700,color:"#b91c1c"}}>-{formatCurrency(e.amount)}</span>
               <button style={{...S.actionBtn,background:"#eff6ff",color:"#1e40af"}} onClick={()=>startEdit(e)}>✏️</button>
-              <button style={{...S.actionBtn,background:"#fee2e2",color:"#b91c1c"}} onClick={()=>onDelete(e.id)}>🗑️</button>
+              <button style={{...S.actionBtn,background:"#fee2e2",color:"#b91c1c"}} onClick={()=>openDelete(e)}>🗑️</button>
             </div>
           </div>
         ))}
+
+        {deletedExp.length > 0 && (
+          <div style={{marginTop:16,borderTop:"2px dashed #e5e7eb",paddingTop:12}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#9ca3af",marginBottom:8}}>🗑️ Deleted Expenses ({deletedExp.length})</div>
+            {deletedExp.map(e=>(
+              <div key={e.id} style={{...S.listRow,opacity:0.5,background:"#f9fafb",border:"1px dashed #d1d5db",flexDirection:"column",alignItems:"flex-start",gap:2}}>
+                <div style={{display:"flex",justifyContent:"space-between",width:"100%"}}>
+                  <div>
+                    <div style={{fontWeight:600,fontSize:12,color:"#6b7280",textDecoration:"line-through"}}>{e.description||e.category}</div>
+                    <div style={{fontSize:11,color:"#9ca3af"}}>{e.category} • {e.date}</div>
+                    <div style={{fontSize:11,color:"#b91c1c",fontWeight:600}}>Reason: {e.deleteRemark}</div>
+                  </div>
+                  <span style={{fontWeight:700,color:"#9ca3af",textDecoration:"line-through"}}>{formatCurrency(e.amount)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1679,8 +1736,10 @@ function ExpensesTab({ expenses, form, onChange, onAdd, onDelete, editingExpense
 // ─── STOCK ENTRY (Admin) ───────────────────────────────────────────────────────
 function StockEntry({ stocks, onAdd, onUpdate, onDelete, stockMovements, onStockIn }) {
   const emptyForm = { name:"", quantity:"", unit:"Pcs", costPrice:"", sellingPrice:"", category:"", lowAlert:"5", dateAdded:today(), notes:"", image:"" };
-  const [form,    setForm]    = useState(emptyForm);
-  const [showAdd, setShowAdd] = useState(false);
+  const [form,         setForm]        = useState(emptyForm);
+  const [showAdd,      setShowAdd]     = useState(false);
+  const [deleteModal,  setDeleteModal] = useState(null);
+  const [deleteRemark, setDeleteRemark]= useState("");
   const [editing, setEditing] = useState(null);
   const [editForm,setEditForm]= useState({});
   const [search,  setSearch]  = useState("");
@@ -1722,7 +1781,6 @@ function StockEntry({ stocks, onAdd, onUpdate, onDelete, stockMovements, onStock
         canvas.getContext("2d").drawImage(img, 0, 0, w, h);
         const compressed = canvas.toDataURL("image/jpeg", 0.6);
         setter(prev => ({...prev, image: compressed}));
-        // Free memory
         canvas.width = 0; canvas.height = 0;
       };
       img.src = ev.target.result;
@@ -1730,15 +1788,45 @@ function StockEntry({ stocks, onAdd, onUpdate, onDelete, stockMovements, onStock
     reader.readAsDataURL(file);
   };
 
-  const filtered = stocks.filter(s => s.name.toLowerCase().includes(search.toLowerCase())||(s.category||"").toLowerCase().includes(search.toLowerCase()));
-  const totalStockValue = stocks.reduce((a,s) => a+(s.quantity*s.costPrice), 0);
-  const lowStockCount   = stocks.filter(s => Number(s.quantity)<=Number(s.lowAlert||5)).length;
+  const openDelete    = s => { setDeleteModal(s); setDeleteRemark(""); };
+  const confirmDelete = () => {
+    if (!deleteRemark.trim()) return;
+    onDelete(deleteModal.id, deleteRemark.trim());
+    setDeleteModal(null); setDeleteRemark("");
+  };
+
+  const activeStocks  = stocks.filter(s => s.status !== "deleted");
+  const deletedStocks = stocks.filter(s => s.status === "deleted");
+  const filtered = activeStocks.filter(s => s.name.toLowerCase().includes(search.toLowerCase()) || (s.category||"").toLowerCase().includes(search.toLowerCase()));
+
+  const totalStockValue = activeStocks.reduce((a,s) => a+(s.quantity*s.costPrice), 0);
+  const lowStockCount   = activeStocks.filter(s => Number(s.quantity)<=Number(s.lowAlert||5)).length;
 
   return (
     <div style={S.section}>
+      {/* Delete Modal */}
+      {deleteModal && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:360,boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+            <div style={{fontSize:16,fontWeight:800,color:"#b91c1c",marginBottom:4}}>🗑️ Confirm Delete Stock Item</div>
+            <div style={{fontSize:13,color:"#374151",marginBottom:4}}><strong>{deleteModal.name}</strong> — {deleteModal.quantity} {deleteModal.unit}</div>
+            <div style={{fontSize:11,color:"#6b7280",marginBottom:14}}>⚠️ Item will be kept in records as deleted. Existing sales history is preserved.</div>
+            <div style={{fontSize:12,fontWeight:700,color:"#374151",marginBottom:6}}>Reason for deletion <span style={{color:"#b91c1c"}}>*</span></div>
+            <textarea style={{...S.input,height:80,resize:"none",fontSize:13}}
+              placeholder="Mandatory: Enter reason (e.g. Discontinued, Wrong entry...)"
+              value={deleteRemark} onChange={e=>setDeleteRemark(e.target.value)}/>
+            {!deleteRemark.trim() && <div style={{fontSize:11,color:"#b91c1c",marginBottom:8}}>⚠ Reason is mandatory</div>}
+            <div style={{display:"flex",gap:8,marginTop:4}}>
+              <button style={{...S.btnPrimary,background:"#b91c1c",flex:1,opacity:deleteRemark.trim()?1:0.5}} onClick={confirmDelete}>Delete Item</button>
+              <button style={{...S.btnPrimary,background:"#6b7280",flex:1}} onClick={()=>setDeleteModal(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* KPIs */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
-        <KPI label="Items"       value={stocks.length}                   color="#1e40af" icon="📦"/>
+        <KPI label="Items"       value={activeStocks.length}             color="#1e40af" icon="📦"/>
         <KPI label="Stock Value" value={formatCurrency(totalStockValue)} color="#1d7e4a" icon="💎"/>
         <KPI label="Low Stock"   value={lowStockCount}                   color={lowStockCount>0?"#b91c1c":"#6b7280"} icon="⚠️"/>
       </div>
@@ -1811,7 +1899,7 @@ function StockEntry({ stocks, onAdd, onUpdate, onDelete, stockMovements, onStock
         <div style={{fontSize:11,color:"#6b7280",marginBottom:10}}>Add quantity to an item already in inventory — logged in movement history</div>
         <select style={S.input} value={inForm.stockId} onChange={e=>setInForm({...inForm,stockId:e.target.value})}>
           <option value="">Select existing item *</option>
-          {stocks.map(s=><option key={s.id} value={s.id}>{s.name} (current: {s.quantity} {s.unit})</option>)}
+          {activeStocks.map(s=><option key={s.id} value={s.id}>{s.name} (current: {s.quantity} {s.unit})</option>)}
         </select>
         <input style={S.input} type="number" placeholder="Quantity received *" value={inForm.qty} onChange={e=>setInForm({...inForm,qty:e.target.value})}/>
         <input style={S.input} type="date" value={inForm.date} onChange={e=>setInForm({...inForm,date:e.target.value})}/>
@@ -1821,7 +1909,7 @@ function StockEntry({ stocks, onAdd, onUpdate, onDelete, stockMovements, onStock
 
       {/* ── 3. INVENTORY LIST ── */}
       <div style={S.card}>
-        <div style={S.cardTitle}>Stock Inventory ({stocks.length})</div>
+        <div style={S.cardTitle}>Stock Inventory ({activeStocks.length})</div>
         <input style={{...S.input,marginBottom:12}} type="text" placeholder="🔍 Search items..." value={search} onChange={e=>setSearch(e.target.value)}/>
         {filtered.length===0 && <div style={S.empty}>No stock items found.</div>}
         {filtered.map(s => {
@@ -1888,18 +1976,32 @@ function StockEntry({ stocks, onAdd, onUpdate, onDelete, stockMovements, onStock
                 <div style={{fontSize:10,color:"#9ca3af"}}>{s.unit}</div>
                 <div style={{display:"flex",gap:4,marginTop:4,justifyContent:"flex-end"}}>
                   <button style={{...S.actionBtn,background:"#eff6ff",color:"#1e40af"}} onClick={()=>{setEditing(s.id);setEditForm({...s});}}>✏️</button>
-                  <button style={{...S.actionBtn,background:"#fee2e2",color:"#b91c1c"}} onClick={()=>onDelete(s.id)}>🗑️</button>
+                  <button style={{...S.actionBtn,background:"#fee2e2",color:"#b91c1c"}} onClick={()=>openDelete(s)}>🗑️</button>
                 </div>
               </div>
             </div>
           );
         })}
+
+        {deletedStocks.length > 0 && (
+          <div style={{marginTop:16,borderTop:"2px dashed #e5e7eb",paddingTop:12}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#9ca3af",marginBottom:8}}>🗑️ Deleted Items ({deletedStocks.length})</div>
+            {deletedStocks.map(s=>(
+              <div key={s.id} style={{...S.stockRow,opacity:0.45,background:"#f9fafb",border:"1px dashed #d1d5db",borderLeft:"4px solid #d1d5db"}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:600,fontSize:12,color:"#6b7280",textDecoration:"line-through"}}>{s.name}</div>
+                  <div style={{fontSize:11,color:"#9ca3af"}}>{s.category||"—"} • Qty was: {s.quantity} {s.unit}</div>
+                  <div style={{fontSize:11,color:"#b91c1c",fontWeight:600}}>Reason: {s.deleteRemark}</div>
+                </div>
+                <div style={{fontSize:10,color:"#9ca3af",textAlign:"right"}}>{s.deletedAt}</div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
 }
-
-// ─── STOCK REPORT (Members) — with Excel + PDF download ───────────────────────
 function StockReport({ stocks, stockMovements }) {
   const [search,    setSearch]    = useState("");
   const [filterCat, setFilterCat] = useState("All");
@@ -2045,9 +2147,21 @@ const FUND_TYPES = ["Opening Balance","Bank Loan","Borrowed from Person","Own In
 
 function FundsTab({ funds, onAdd, onDelete, sales, expenses, isAdmin }) {
   const emptyForm = { type:"Opening Balance", amount:"", source:"", date:today(), note:"" };
-  const [form, setForm] = useState(emptyForm);
+  const [form,         setForm]        = useState(emptyForm);
+  const [deleteModal,  setDeleteModal] = useState(null);
+  const [deleteRemark, setDeleteRemark]= useState("");
 
-  const totalFundsIn  = funds.reduce((a,f)=>a+Number(f.amount),0);
+  const activeFunds  = funds.filter(f => f.status !== "deleted");
+  const deletedFunds = funds.filter(f => f.status === "deleted");
+
+  const openDelete    = f => { setDeleteModal(f); setDeleteRemark(""); };
+  const confirmDelete = () => {
+    if (!deleteRemark.trim()) return;
+    onDelete(deleteModal.id, deleteRemark.trim());
+    setDeleteModal(null); setDeleteRemark("");
+  };
+
+  const totalFundsIn  = activeFunds.reduce((a,f)=>a+Number(f.amount),0);
   const totalSales    = sales.reduce((a,s)=>a+s.amount,0);
   const totalExpenses = expenses.reduce((a,e)=>a+e.amount,0);
   const netProfit     = totalSales - totalExpenses;
@@ -2055,7 +2169,7 @@ function FundsTab({ funds, onAdd, onDelete, sales, expenses, isAdmin }) {
 
   // Cash flow timeline — merge funds, sales, expenses sorted by date desc
   const allEvents = [
-    ...funds.map(f=>({...f, evType:"fund",   label:f.source||f.type,      color:"#7c3aed", sign:"+", amount:Number(f.amount)})),
+    ...activeFunds.map(f=>({...f, evType:"fund",   label:f.source||f.type,      color:"#7c3aed", sign:"+", amount:Number(f.amount)})),
     ...sales.map(s=>({...s, evType:"sale",   label:s.purchaser||"Sale",   color:"#1d7e4a", sign:"+"})),
     ...expenses.map(e=>({...e,evType:"expense",label:e.description||e.category,color:"#b91c1c",sign:"-"})),
   ].sort((a,b)=>new Date(b.date)-new Date(a.date));
@@ -2073,6 +2187,27 @@ function FundsTab({ funds, onAdd, onDelete, sales, expenses, isAdmin }) {
 
   return (
     <div style={S.section}>
+
+      {/* Delete Modal */}
+      {deleteModal && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:360,boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+            <div style={{fontSize:16,fontWeight:800,color:"#b91c1c",marginBottom:4}}>🗑️ Confirm Delete</div>
+            <div style={{fontSize:13,color:"#374151",marginBottom:4}}><strong>{deleteModal.source||deleteModal.type}</strong> — {formatCurrency(deleteModal.amount)}</div>
+            <div style={{fontSize:11,color:"#6b7280",marginBottom:14}}>⚠️ This fund entry will be kept in records as deleted.</div>
+            <div style={{fontSize:12,fontWeight:700,color:"#374151",marginBottom:6}}>Reason for deletion <span style={{color:"#b91c1c"}}>*</span></div>
+            <textarea style={{...S.input,height:80,resize:"none",fontSize:13}}
+              placeholder="Mandatory: Enter reason (e.g. Wrong entry, Duplicate...)"
+              value={deleteRemark} onChange={e=>setDeleteRemark(e.target.value)}/>
+            {!deleteRemark.trim() && <div style={{fontSize:11,color:"#b91c1c",marginBottom:8}}>⚠ Reason is mandatory</div>}
+            <div style={{display:"flex",gap:8,marginTop:4}}>
+              <button style={{...S.btnPrimary,background:"#b91c1c",flex:1,opacity:deleteRemark.trim()?1:0.5}} onClick={confirmDelete}>Delete</button>
+              <button style={{...S.btnPrimary,background:"#6b7280",flex:1}} onClick={()=>setDeleteModal(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* KPI cards */}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
         <KPI label="Total Funds IN"   value={formatCurrency(totalFundsIn)}   color="#7c3aed" icon="🏦"/>
@@ -2120,10 +2255,10 @@ function FundsTab({ funds, onAdd, onDelete, sales, expenses, isAdmin }) {
       )}
 
       {/* Fund entries list */}
-      {funds.length>0 && (
+      {activeFunds.length>0 && (
         <div style={S.card}>
-          <div style={S.cardTitle}>Fund Entries ({funds.length})</div>
-          {funds.map(f=>(
+          <div style={S.cardTitle}>Fund Entries ({activeFunds.length})</div>
+          {activeFunds.map(f=>(
             <div key={f.id} style={{...S.listRow,gap:8}}>
               <div style={{width:6,height:40,borderRadius:3,background:typeColors[f.type]||"#6b7280",flexShrink:0}}/>
               <div style={{flex:1,minWidth:0}}>
@@ -2133,10 +2268,27 @@ function FundsTab({ funds, onAdd, onDelete, sales, expenses, isAdmin }) {
               </div>
               <div style={{textAlign:"right",flexShrink:0}}>
                 <div style={{fontWeight:800,color:"#7c3aed",fontSize:14}}>+{formatCurrency(f.amount)}</div>
-                {isAdmin && <button style={{...S.actionBtn,background:"#fee2e2",color:"#b91c1c",marginTop:4}} onClick={()=>onDelete(f.id)}>🗑️</button>}
+                {isAdmin && <button style={{...S.actionBtn,background:"#fee2e2",color:"#b91c1c",marginTop:4}} onClick={()=>openDelete(f)}>🗑️</button>}
               </div>
             </div>
           ))}
+
+          {deletedFunds.length > 0 && (
+            <div style={{marginTop:16,borderTop:"2px dashed #e5e7eb",paddingTop:12}}>
+              <div style={{fontSize:12,fontWeight:700,color:"#9ca3af",marginBottom:8}}>🗑️ Deleted Entries ({deletedFunds.length})</div>
+              {deletedFunds.map(f=>(
+                <div key={f.id} style={{...S.listRow,gap:8,opacity:0.5,background:"#f9fafb",border:"1px dashed #d1d5db"}}>
+                  <div style={{width:6,height:32,borderRadius:3,background:"#d1d5db",flexShrink:0}}/>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:600,fontSize:12,color:"#6b7280",textDecoration:"line-through"}}>{f.source||f.type}</div>
+                    <div style={{fontSize:11,color:"#9ca3af"}}>{f.type} • {f.date}</div>
+                    <div style={{fontSize:11,color:"#b91c1c",fontWeight:600}}>Reason: {f.deleteRemark}</div>
+                  </div>
+                  <span style={{fontWeight:700,color:"#9ca3af",textDecoration:"line-through",flexShrink:0}}>{formatCurrency(f.amount)}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
