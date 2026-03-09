@@ -90,6 +90,11 @@ function initFirebase() {
   }
 }
 
+// ─── APP VERSION — bump this on EVERY deploy. Must match Firebase config doc. ─
+// Firebase path: rednectar/config  field: requiredVersion (string)
+// Old clients whose cached version < requiredVersion are BLOCKED until they update.
+const APP_VERSION = "3.0";
+
 // ─── COLLECTION NAMES ─────────────────────────────────────────────────────────
 const COL = {
   sales:    "rednectar/data/sales",
@@ -97,6 +102,7 @@ const COL = {
   stocks:   "rednectar/data/stocks",
   movements:"rednectar/data/stockMovements",
   funds:    "rednectar/data/funds",
+  config:   "rednectar/config",
 };
 
 // ─── LOCAL STORAGE FALLBACK ───────────────────────────────────────────────────
@@ -822,9 +828,49 @@ function App() {
   const [stocks,         setStocks]         = useState(() => lsGet(LS_KEYS.stocks));
   const [stockMovements, setStockMovements] = useState(() => lsGet(LS_KEYS.movements));
   const [funds,          setFunds]          = useState(() => lsGet(LS_KEYS.funds));
-  const [dbStatus,       setDbStatus]       = useState("connecting"); // connecting | online | offline
+  const [dbStatus,       setDbStatus]       = useState("connecting");
+  // Version gate: null=checking, "ok"=pass, "outdated"=blocked, "error"=can't check (allow through)
+  const [versionStatus,  setVersionStatus]  = useState("checking");
+  const [swUpdateReady,  setSwUpdateReady]  = useState(false);
 
   const { useEffect } = React;
+
+  // ── Version check: fetch requiredVersion from Firebase ───────────────────
+  useEffect(() => {
+    if (!firebaseReady) { setVersionStatus("ok"); return; }
+    const timeout = setTimeout(() => setVersionStatus("ok"), 6000); // fail-open after 6s
+    db.doc("rednectar/config").get()
+      .then(snap => {
+        clearTimeout(timeout);
+        if (!snap.exists) {
+          // First time: write current version as required
+          db.doc("rednectar/config").set({ requiredVersion: APP_VERSION }).catch(console.error);
+          setVersionStatus("ok");
+          return;
+        }
+        const required = snap.data().requiredVersion || "1.0";
+        const isOutdated = parseFloat(APP_VERSION) < parseFloat(required);
+        setVersionStatus(isOutdated ? "outdated" : "ok");
+      })
+      .catch(() => { clearTimeout(timeout); setVersionStatus("ok"); }); // fail-open on error
+  }, []);
+
+  // ── Listen for SW update-waiting signal ──────────────────────────────────
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    const handler = () => setSwUpdateReady(true);
+    // Register so SW registration code can call it
+    window.__swUpdateHandler = handler;
+    // Already waiting before React loaded?
+    if (window.__swUpdateWaiting) setSwUpdateReady(true);
+    // Also listen for postMessage from SW
+    navigator.serviceWorker.addEventListener('message', e => {
+      if (e.data && (e.data.type === 'UPDATE_AVAILABLE' || e.data.type === 'NOTIFY_UPDATE')) {
+        setSwUpdateReady(true);
+      }
+    });
+    return () => { window.__swUpdateHandler = null; };
+  }, []);
 
   // ── Persist to localStorage whenever state changes ────────────────────────
   useEffect(() => { lsSet(LS_KEYS.sales,     sales);     }, [sales]);
@@ -838,7 +884,6 @@ function App() {
     if (!firebaseReady) { setDbStatus(FIREBASE_CONFIG.apiKey==="YOUR_API_KEY"?"noconfig":"offline"); return; }
     setDbStatus("connecting");
 
-    // Network online/offline events
     const goOffline = () => setDbStatus("offline");
     const goOnline  = () => setDbStatus("connecting");
     window.addEventListener("offline", goOffline);
@@ -871,7 +916,6 @@ function App() {
     listen(COL.movements, setStockMovements, LS_KEYS.movements);
     listen(COL.funds,     setFunds,          LS_KEYS.funds);
 
-    // Timeout: if no snapshot after 8s, mark offline
     const timer = setTimeout(() => {
       setDbStatus(prev => prev === "connecting" ? "offline" : prev);
     }, 8000);
@@ -884,7 +928,7 @@ function App() {
     };
   }, []);
 
-  // ── One-time migration: patch old sales that are missing stockName ───────
+  // ── One-time migration: patch old sales missing stockName ─────────────────
   useEffect(() => {
     if (!firebaseReady || !stocks.length || !sales.length) return;
     const needsPatch = sales.filter(s => s.stockId && !s.stockName);
@@ -892,25 +936,91 @@ function App() {
     needsPatch.forEach(s => {
       const stk = stocks.find(x => x.id == s.stockId);
       if (!stk) return;
-      const patched = { ...s, stockName: stk.name, stockUnit: stk.unit };
-      db.collection(COL.sales).doc(String(s.id)).set(patched).catch(console.error);
+      db.collection(COL.sales).doc(String(s.id)).set({ ...s, stockName: stk.name, stockUnit: stk.unit }).catch(console.error);
     });
-    console.log(`✅ Patched ${needsPatch.length} old sale records with stockName`);
   }, [sales, stocks]);
 
-  if (!currentUser) return <LoginScreen onLogin={setCurrentUser} />;
+  // ── Force-update helper: clear SW cache then hard reload ─────────────────
+  const doForceUpdate = () => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(regs => {
+        regs.forEach(reg => {
+          if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+          reg.unregister();
+        });
+      });
+    }
+    if ('caches' in window) {
+      caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).then(() => {
+        window.location.reload(true);
+      });
+    } else {
+      window.location.reload(true);
+    }
+  };
+
+  // ── Render: version checking spinner ─────────────────────────────────────
+  if (versionStatus === "checking") {
+    return (
+      <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:12,background:"#f0f4ff"}}>
+        <div style={{width:40,height:40,border:"4px solid #1e40af",borderTopColor:"transparent",borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
+        <div style={{fontSize:13,color:"#6b7280",fontWeight:600}}>Checking for updates…</div>
+        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      </div>
+    );
+  }
+
+  // ── Render: OUTDATED — full screen block before login ────────────────────
+  if (versionStatus === "outdated") {
+    return (
+      <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#1e3a8a,#1e40af)",padding:20}}>
+        <div style={{background:"#fff",borderRadius:20,padding:32,maxWidth:360,width:"100%",textAlign:"center",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+          <div style={{fontSize:48,marginBottom:8}}>🔄</div>
+          <div style={{fontSize:20,fontWeight:900,color:"#1e3a8a",marginBottom:6}}>Update Required</div>
+          <div style={{fontSize:13,color:"#374151",marginBottom:6,lineHeight:1.6}}>
+            A newer version of Red Nectar is available. You must update before logging in to ensure data safety.
+          </div>
+          <div style={{background:"#fef3c7",borderRadius:10,padding:"10px 14px",marginBottom:20,fontSize:12,color:"#92400e",fontWeight:600}}>
+            ⚠ Using an old version can cause data loss or accidental deletions.
+          </div>
+          <div style={{fontSize:12,color:"#6b7280",marginBottom:4}}>Your version: <strong>{APP_VERSION}</strong></div>
+          <button
+            onClick={doForceUpdate}
+            style={{width:"100%",padding:"14px 0",background:"#1e40af",color:"#fff",border:"none",borderRadius:12,fontWeight:800,fontSize:16,cursor:"pointer",marginBottom:12,marginTop:8}}>
+            ⬆ Update Now
+          </button>
+          <div style={{fontSize:11,color:"#9ca3af"}}>This will clear your cache and load the latest version. Your data is safe in the cloud.</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Render: SW update banner (for logged-in users when new SW is waiting) ─
+  const updateBanner = swUpdateReady ? (
+    <div style={{position:"fixed",bottom:0,left:0,right:0,zIndex:9999,background:"#1e40af",color:"#fff",padding:"12px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",boxShadow:"0 -4px 20px rgba(0,0,0,0.3)"}}>
+      <div style={{fontSize:13,fontWeight:700}}>🔄 New version available!</div>
+      <button onClick={doForceUpdate} style={{background:"#fff",color:"#1e40af",border:"none",borderRadius:20,padding:"6px 18px",fontWeight:800,fontSize:13,cursor:"pointer"}}>
+        Update Now
+      </button>
+    </div>
+  ) : null;
+
+  if (!currentUser) return <>{updateBanner}<LoginScreen onLogin={setCurrentUser} /></>;
 
   return (
-    <MainApp
-      currentUser={currentUser}
-      onLogout={() => setCurrentUser(null)}
-      sales={sales}             setSales={setSales}
-      expenses={expenses}       setExpenses={setExpenses}
-      stocks={stocks}           setStocks={setStocks}
-      stockMovements={stockMovements} setStockMovements={setStockMovements}
-      funds={funds}             setFunds={setFunds}
-      dbStatus={dbStatus}
-    />
+    <>
+      {updateBanner}
+      <MainApp
+        currentUser={currentUser}
+        onLogout={() => setCurrentUser(null)}
+        sales={sales}             setSales={setSales}
+        expenses={expenses}       setExpenses={setExpenses}
+        stocks={stocks}           setStocks={setStocks}
+        stockMovements={stockMovements} setStockMovements={setStockMovements}
+        funds={funds}             setFunds={setFunds}
+        dbStatus={dbStatus}
+      />
+    </>
   );
 }
 
@@ -2579,7 +2689,46 @@ const S = {
 
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('sw.js').catch(err => console.log('SW error:', err));
+        navigator.serviceWorker.register('sw.js').then(reg => {
+
+          // Check right away if there's already a waiting SW
+          if (reg.waiting) {
+            // There's already an update waiting — notify React app
+            if (navigator.serviceWorker.controller) {
+              navigator.serviceWorker.controller.postMessage({ type: 'NOTIFY_UPDATE' });
+            }
+            // Dispatch custom event so React can pick it up even before controller exists
+            window.__swUpdateWaiting = true;
+          }
+
+          // Listen for new SW installing
+          reg.addEventListener('updatefound', () => {
+            const newSW = reg.installing;
+            newSW.addEventListener('statechange', () => {
+              if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
+                // New SW is installed & waiting — tell React to show banner
+                window.__swUpdateWaiting = true;
+                // Post message to React (if it's listening already)
+                if (window.__swUpdateHandler) window.__swUpdateHandler();
+              }
+            });
+          });
+
+          // When the new SW takes control, reload all clients
+          navigator.serviceWorker.addEventListener('message', e => {
+            if (e.data && e.data.type === 'SW_ACTIVATED') {
+              window.location.reload();
+            }
+          });
+
+        }).catch(err => console.log('SW error:', err));
+
+        // Poll every 60s for new SW
+        setInterval(() => {
+          navigator.serviceWorker.getRegistration().then(reg => {
+            if (reg) reg.update();
+          });
+        }, 60000);
       });
     }
   </script>
