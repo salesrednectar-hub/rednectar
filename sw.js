@@ -1,10 +1,10 @@
-// Red Nectar Service Worker — v12 (GitHub Pages compatible)
-const CACHE_NAME = 'rednectar-v12';
+// Red Nectar Service Worker — v13 (GitHub Pages + cdnjs)
+const CACHE_NAME = 'rednectar-v13';
 
 const CDN_ASSETS = [
-  'https://unpkg.com/react@18/umd/react.production.min.js',
-  'https://unpkg.com/react-dom@18/umd/react-dom.production.min.js',
-  'https://unpkg.com/@babel/standalone/babel.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js',
   'https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js',
   'https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js',
 ];
@@ -12,11 +12,9 @@ const CDN_ASSETS = [
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(async cache => {
-      // Cache local files using relative paths (works on any subdirectory)
       try { await cache.add(new Request(self.registration.scope)); } catch(e) {}
       try { await cache.add(new Request(self.registration.scope + 'index.html')); } catch(e) {}
       try { await cache.add(new Request(self.registration.scope + 'manifest.json')); } catch(e) {}
-      // Cache CDN assets
       for (const url of CDN_ASSETS) {
         try { await cache.add(new Request(url, { mode:'cors' })); }
         catch(e) { console.warn('Could not cache:', url); }
@@ -38,14 +36,12 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
-
-  // Never intercept Firebase API calls
   if (url.hostname.includes('firestore.googleapis.com') ||
       url.hostname.includes('firebase.googleapis.com') ||
       url.hostname.includes('googleapis.com')) return;
 
   const isLocal = url.origin === self.location.origin;
-  const isCDN   = url.hostname === 'unpkg.com' || url.hostname === 'www.gstatic.com';
+  const isCDN   = url.hostname === 'cdnjs.cloudflare.com' || url.hostname === 'www.gstatic.com';
   if (!isLocal && !isCDN) return;
 
   event.respondWith(
@@ -57,7 +53,6 @@ self.addEventListener('fetch', event => {
         }
         return response;
       }).catch(() => {
-        // Fallback to index.html for navigation requests
         if (event.request.mode === 'navigate') {
           return caches.match(self.registration.scope + 'index.html');
         }

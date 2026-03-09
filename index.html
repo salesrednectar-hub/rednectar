@@ -316,30 +316,50 @@ function downloadMonthlyExcel(mSales, mExpenses, mExpByCat, monthLabel, stocks) 
 
 // PDF download for Monthly report
 function downloadMonthlyPDF(mSales, mExpenses, mExpByCat, monthLabel, stocks) {
-  const mTotal  = mSales.reduce((a,b)=>a+b.amount,0);
+  const activeSales = mSales.filter(s=>s.status!=="deleted");
+  const deletedSales = mSales.filter(s=>s.status==="deleted");
+  const mTotal  = activeSales.reduce((a,b)=>a+b.amount-(b.returnAmt||0),0);
   const mExp    = mExpenses.reduce((a,b)=>a+b.amount,0);
   const mProfit = mTotal - mExp;
-  const mPaid   = mSales.filter(s=>s.paymentStatus==="Paid").reduce((a,b)=>a+b.amount,0);
-  const mUnpaid = mSales.filter(s=>s.paymentStatus!=="Paid").reduce((a,b)=>a+b.amount,0);
+  const mPaid   = activeSales.filter(s=>s.paymentStatus==="Paid").reduce((a,b)=>a+b.amount,0);
+  const mUnpaid = activeSales.filter(s=>s.paymentStatus!=="Paid").reduce((a,b)=>a+b.amount,0);
   const margin  = mTotal>0?((mProfit/mTotal)*100).toFixed(1):0;
 
-  const salesRows = mSales.map(s=>{
+  const salesRows = activeSales.map(s=>{
     const stk = (stocks||[]).find(x=>x.id==s.stockId);
     const itemName = s.stockName || (stk?stk.name:"—");
     const itemUnit = s.stockUnit || (stk?stk.unit:"");
+    const returnInfo = s.hasReturn ? `<br/><span style="color:#b45309;font-size:10px">↩ Returned: ${s.returnQty} ${itemUnit} — ${s.returnReason}</span>` : "";
     return `
     <tr>
       <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px">${s.date}</td>
       <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;font-weight:600">${s.purchaser||"—"}</td>
       <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;color:#6b7280">${s.mobile||"—"}</td>
       <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;color:#6b7280">${s.description||"Sale"}</td>
-      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;color:#1e40af;font-weight:600">${itemName}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;color:#1e40af;font-weight:600">${itemName}${returnInfo}</td>
       <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;text-align:center;font-weight:700">${s.stockQty||"—"} ${itemUnit}</td>
-      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;text-align:right;font-weight:700;color:#1d7e4a">₹${Number(s.amount).toLocaleString("en-IN")}</td>
+      <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;text-align:right;font-weight:700;color:#1d7e4a">₹${Number(s.amount).toLocaleString("en-IN")}${s.returnAmt?`<br/><span style="color:#b45309;font-size:10px">-₹${Number(s.returnAmt).toLocaleString("en-IN")} returned</span>`:""}
+      </td>
       <td style="padding:7px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;text-align:center">
         <span style="background:${s.paymentStatus==='Paid'?'#dcfce7':'#fee2e2'};color:${s.paymentStatus==='Paid'?'#166534':'#b91c1c'};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700">${s.paymentStatus}</span>
       </td>
-    </tr>`;}).join("");
+    </tr>`}).join("");
+
+  const deletedRows = deletedSales.length ? `
+    <tr><td colspan="8" style="padding:6px 8px;font-size:11px;font-weight:700;color:#9ca3af;background:#f9fafb;border-bottom:1px solid #e5e7eb">🗑️ DELETED SALES (not counted in revenue)</td></tr>
+    ${deletedSales.map(s=>{
+      const stk=(stocks||[]).find(x=>x.id==s.stockId);
+      const nm=s.stockName||(stk?stk.name:"—");
+      const ut=s.stockUnit||(stk?stk.unit:"");
+      return `<tr style="opacity:0.5">
+        <td style="padding:5px 8px;border-bottom:1px solid #f3f4f6;font-size:11px;text-decoration:line-through;color:#9ca3af">${s.date}</td>
+        <td style="padding:5px 8px;border-bottom:1px solid #f3f4f6;font-size:11px;text-decoration:line-through;color:#9ca3af">${s.purchaser||"—"}</td>
+        <td style="padding:5px 8px;border-bottom:1px solid #f3f4f6;font-size:11px;color:#9ca3af">${s.mobile||"—"}</td>
+        <td style="padding:5px 8px;border-bottom:1px solid #f3f4f6;font-size:11px;color:#9ca3af">${s.description||"Sale"}</td>
+        <td style="padding:5px 8px;border-bottom:1px solid #f3f4f6;font-size:11px;color:#9ca3af">${nm} — ${s.stockQty||"—"} ${ut}</td>
+        <td colspan="2" style="padding:5px 8px;border-bottom:1px solid #f3f4f6;font-size:11px;text-decoration:line-through;color:#9ca3af;text-align:right">₹${Number(s.amount).toLocaleString("en-IN")}</td>
+        <td style="padding:5px 8px;border-bottom:1px solid #f3f4f6;font-size:11px;color:#b91c1c">Deleted: ${s.deleteRemark}</td>
+      </tr>`;}).join("")}` : "";
 
   const expRows = mExpenses.map(e=>`
     <tr>
@@ -392,10 +412,10 @@ function downloadMonthlyPDF(mSales, mExpenses, mExpByCat, monthLabel, stocks) {
       <div class="kpi-sub">Margin: ${margin}%</div>
     </div>
   </div>
-  <h2>💰 Sales — ${monthLabel} (${mSales.length})</h2>
+  <h2>💰 Sales — ${monthLabel} (${activeSales.length} active${deletedSales.length?`, ${deletedSales.length} deleted`:""})</h2>
   <table>
     <thead><tr><th>Date</th><th>Purchaser</th><th>Mobile</th><th>Description</th><th>Stock Item</th><th>Qty Sold</th><th>Amount</th><th>Status</th></tr></thead>
-    <tbody>${salesRows||'<tr><td colspan="6" style="text-align:center;padding:16px;color:#9ca3af">No sales this month</td></tr>'}</tbody>
+    <tbody>${salesRows||'<tr><td colspan="8" style="text-align:center;padding:16px;color:#9ca3af">No sales this month</td></tr>'}${deletedRows}</tbody>
   </table>
   <h2>📋 Expenses — ${monthLabel} (${mExpenses.length})</h2>
   <table>
@@ -1002,7 +1022,8 @@ function MainApp({ currentUser, onLogout, sales, setSales, expenses, setExpenses
     setTimeout(() => setNotification(null), 2800);
   };
 
-  const totalSales    = sales.reduce((a,b) => a+b.amount, 0);
+  const activeSales   = sales.filter(s => s.status !== "deleted");
+  const totalSales    = activeSales.reduce((a,b) => a + b.amount - (b.returnAmt||0), 0);
   const totalExpenses = expenses.reduce((a,b) => a+b.amount, 0);
   const netProfit     = totalSales - totalExpenses;
 
@@ -1083,11 +1104,37 @@ function MainApp({ currentUser, onLogout, sales, setSales, expenses, setExpenses
     notify("Sale updated!");
   };
 
-  const deleteSale = (id) => {
+  const deleteSale = (id, remark) => {
+    const sale = sales.find(s => s.id === id);
+    if (!sale) return;
+    // Soft delete — keep record in Firebase, mark as deleted
+    const updated = { ...sale, status: "deleted", deleteRemark: remark, deletedAt: today() };
+    if (firebaseReady) db.collection(COL.sales).doc(String(id)).set(updated).catch(console.error);
+    else setSales(sales.map(s => s.id===id ? updated : s));
+    // Reverse stock deduction
     reverseStockOut(id);
-    if (firebaseReady) db.collection(COL.sales).doc(String(id)).delete().catch(console.error);
-    else setSales(sales.filter(s => s.id!==id));
     notify("Sale deleted","error");
+  };
+
+  const returnSale = (id, returnQty, returnReason) => {
+    const sale = sales.find(s => s.id === id);
+    if (!sale) return;
+    const qty = Number(returnQty);
+    if (!qty || qty <= 0) return;
+    // Record partial stock return
+    const returnId = Date.now();
+    const stock = stocks.find(x => x.id == sale.stockId);
+    if (stock && firebaseReady) {
+      db.collection(COL.stocks).doc(String(stock.id)).set({...stock, quantity: stock.quantity + qty}).catch(console.error);
+      const mov = { id: returnId, stockId: stock.id, type:"in", qty, date: today(), note: `Return from ${sale.purchaser||"customer"}: ${returnReason||"Sale return"}` };
+      db.collection(COL.movements).doc(String(returnId)).set(mov).catch(console.error);
+    }
+    // Mark sale with return info
+    const returnAmt = qty * (sale.amount / (sale.stockQty||1));
+    const updated = { ...sale, hasReturn: true, returnQty: (sale.returnQty||0) + qty, returnReason, returnAmt: (sale.returnAmt||0) + returnAmt, returnAt: today() };
+    if (firebaseReady) db.collection(COL.sales).doc(String(id)).set(updated).catch(console.error);
+    else setSales(sales.map(s => s.id===id ? updated : s));
+    notify(`↩ Return of ${qty} ${sale.stockUnit||""} recorded`);
   };
 
   // ── Expenses ──────────────────────────────────────────────────────────────
@@ -1226,16 +1273,16 @@ function MainApp({ currentUser, onLogout, sales, setSales, expenses, setExpenses
       )}
 
       <div style={S.content}>
-        {activeTab==="dashboard" && <Dashboard totalSales={totalSales} totalExpenses={totalExpenses} netProfit={netProfit} expenseByCategory={expenseByCategory} sales={sales} expenses={expenses} stocks={stocks} stockMovements={stockMovements} funds={funds}/>}
-        {activeTab==="sales"     && isAdmin && <SalesTab sales={sales} form={saleForm} onChange={p=>setSaleForm({...saleForm,...p})} onAdd={addSale} onDelete={deleteSale} editingSale={editingSale} setEditingSale={setEditingSale} onSaveEdit={saveSaleEdit} stocks={stocks}/>}
+        {activeTab==="dashboard" && <Dashboard totalSales={totalSales} totalExpenses={totalExpenses} netProfit={netProfit} expenseByCategory={expenseByCategory} sales={activeSales} expenses={expenses} stocks={stocks} stockMovements={stockMovements} funds={funds}/>}
+        {activeTab==="sales"     && isAdmin && <SalesTab sales={sales} form={saleForm} onChange={p=>setSaleForm({...saleForm,...p})} onAdd={addSale} onDelete={deleteSale} onReturn={returnSale} editingSale={editingSale} setEditingSale={setEditingSale} onSaveEdit={saveSaleEdit} stocks={stocks}/>}
         {activeTab==="expenses"  && isAdmin && <ExpensesTab expenses={expenses} form={expenseForm} onChange={p=>setExpenseForm({...expenseForm,...p})} onAdd={addExpense} onDelete={deleteExpense} editingExpense={editingExpense} setEditingExpense={setEditingExpense} onSaveEdit={saveExpenseEdit}/>}
         {activeTab==="stock"     && (isAdmin
           ? <StockEntry stocks={stocks} onAdd={addStock} onUpdate={updateStock} onDelete={deleteStock} stockMovements={stockMovements} onStockIn={recordStockIn}/>
           : <StockReport stocks={stocks} stockMovements={stockMovements}/>
         )}
-        {activeTab==="funds"    && <FundsTab funds={funds} onAdd={isAdmin?addFund:null} onDelete={isAdmin?deleteFund:null} sales={sales} expenses={expenses} isAdmin={isAdmin}/>}
-        {activeTab==="report"   && <Report totalSales={totalSales} totalExpenses={totalExpenses} netProfit={netProfit} expenseByCategory={expenseByCategory} sales={sales} expenses={expenses} stocks={stocks}/>}
-        {activeTab==="monthly"  && <MonthlyReport sales={sales} expenses={expenses} stocks={stocks}/>}
+        {activeTab==="funds"    && <FundsTab funds={funds} onAdd={isAdmin?addFund:null} onDelete={isAdmin?deleteFund:null} sales={activeSales} expenses={expenses} isAdmin={isAdmin}/>}
+        {activeTab==="report"   && <Report totalSales={totalSales} totalExpenses={totalExpenses} netProfit={netProfit} expenseByCategory={expenseByCategory} sales={activeSales} expenses={expenses} stocks={stocks}/>}
+        {activeTab==="monthly"  && <MonthlyReport sales={activeSales} expenses={expenses} stocks={stocks}/>}
       </div>
 
       <div style={S.nav}>
@@ -1388,15 +1435,92 @@ function KPI({ label, value, color, icon }) {
 }
 
 // ─── SALES TAB (Admin) — with stock linking ────────────────────────────────────
-function SalesTab({ sales, form, onChange, onAdd, onDelete, editingSale, setEditingSale, onSaveEdit, stocks }) {
-  const [editForm, setEditForm] = useState({});
+function SalesTab({ sales, form, onChange, onAdd, onDelete, onReturn, editingSale, setEditingSale, onSaveEdit, stocks }) {
+  const [editForm,      setEditForm]      = useState({});
+  const [deleteModal,   setDeleteModal]   = useState(null); // sale object
+  const [deleteRemark,  setDeleteRemark]  = useState("");
+  const [returnModal,   setReturnModal]   = useState(null); // sale object
+  const [returnQty,     setReturnQty]     = useState("");
+  const [returnReason,  setReturnReason]  = useState("");
+
   const startEdit  = s => { setEditingSale(s.id); setEditForm({amount:s.amount,description:s.description,date:s.date,purchaser:s.purchaser||"",mobile:s.mobile||"",paymentStatus:s.paymentStatus||"Paid"}); };
   const cancelEdit = () => setEditingSale(null);
 
+  const openDelete = s => { setDeleteModal(s); setDeleteRemark(""); };
+  const confirmDelete = () => {
+    if (!deleteRemark.trim()) return;
+    onDelete(deleteModal.id, deleteRemark.trim());
+    setDeleteModal(null); setDeleteRemark("");
+  };
+
+  const openReturn = s => { setReturnModal(s); setReturnQty(""); setReturnReason(""); };
+  const confirmReturn = () => {
+    if (!returnQty || Number(returnQty)<=0) return;
+    if (!returnReason.trim()) return;
+    onReturn(returnModal.id, returnQty, returnReason.trim());
+    setReturnModal(null);
+  };
+
   const selectedStock = stocks.find(s => s.id===Number(form.stockId));
+  const activeSales  = sales.filter(s => s.status !== "deleted");
+  const deletedSales = sales.filter(s => s.status === "deleted");
 
   return (
     <div style={S.section}>
+
+      {/* ── Delete Confirmation Modal ── */}
+      {deleteModal && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:360,boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+            <div style={{fontSize:16,fontWeight:800,color:"#b91c1c",marginBottom:4}}>🗑️ Confirm Delete</div>
+            <div style={{fontSize:13,color:"#374151",marginBottom:4}}>
+              Sale to <strong>{deleteModal.purchaser||"—"}</strong> — {formatCurrency(deleteModal.amount)}
+            </div>
+            <div style={{fontSize:11,color:"#6b7280",marginBottom:14}}>⚠️ Stock will be restored. Sale will be kept in records as deleted.</div>
+            <div style={{fontSize:12,fontWeight:700,color:"#374151",marginBottom:6}}>Reason for deletion <span style={{color:"#b91c1c"}}>*</span></div>
+            <textarea
+              style={{...S.input,height:80,resize:"none",fontSize:13}}
+              placeholder="Mandatory: Enter reason (e.g. Wrong entry, Duplicate, Customer cancelled...)"
+              value={deleteRemark}
+              onChange={e=>setDeleteRemark(e.target.value)}
+            />
+            {deleteRemark.trim()==='' && <div style={{fontSize:11,color:"#b91c1c",marginBottom:8}}>⚠ Reason is mandatory</div>}
+            <div style={{display:"flex",gap:8,marginTop:4}}>
+              <button style={{...S.btnPrimary,background:"#b91c1c",flex:1,opacity:deleteRemark.trim()?1:0.5}} onClick={confirmDelete}>Delete Sale</button>
+              <button style={{...S.btnPrimary,background:"#6b7280",flex:1}} onClick={()=>setDeleteModal(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Sale Return Modal ── */}
+      {returnModal && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:360,boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+            <div style={{fontSize:16,fontWeight:800,color:"#1e40af",marginBottom:4}}>↩️ Sale Return</div>
+            <div style={{fontSize:13,color:"#374151",marginBottom:2}}>
+              <strong>{returnModal.purchaser||"—"}</strong> — {formatCurrency(returnModal.amount)}
+            </div>
+            <div style={{fontSize:11,color:"#6b7280",marginBottom:14}}>
+              📦 {returnModal.stockName||"—"} — Sold qty: {returnModal.stockQty} {returnModal.stockUnit||""}
+              {returnModal.returnQty ? ` (Already returned: ${returnModal.returnQty})` : ""}
+            </div>
+            <div style={{fontSize:12,fontWeight:700,color:"#374151",marginBottom:6}}>Return Quantity <span style={{color:"#b91c1c"}}>*</span></div>
+            <input style={S.input} type="number" placeholder={`Max: ${(returnModal.stockQty||0)-(returnModal.returnQty||0)}`}
+              value={returnQty} onChange={e=>setReturnQty(e.target.value)} min="1" max={(returnModal.stockQty||0)-(returnModal.returnQty||0)}/>
+            <div style={{fontSize:12,fontWeight:700,color:"#374151",marginBottom:6}}>Return Reason <span style={{color:"#b91c1c"}}>*</span></div>
+            <textarea style={{...S.input,height:70,resize:"none",fontSize:13}}
+              placeholder="e.g. Damaged, Wrong item, Customer changed mind..."
+              value={returnReason} onChange={e=>setReturnReason(e.target.value)}/>
+            {(!returnQty||!returnReason.trim()) && <div style={{fontSize:11,color:"#b91c1c",marginBottom:6}}>⚠ Both fields are mandatory</div>}
+            <div style={{display:"flex",gap:8,marginTop:4}}>
+              <button style={{...S.btnPrimary,background:"#1e40af",flex:1,opacity:(returnQty&&returnReason.trim())?1:0.5}} onClick={confirmReturn}>↩ Confirm Return</button>
+              <button style={{...S.btnPrimary,background:"#6b7280",flex:1}} onClick={()=>setReturnModal(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={S.card}>
         <div style={S.cardTitle}>Record Sale</div>
         <input style={S.input} type="text" placeholder="Purchaser Name" value={form.purchaser} onChange={e=>onChange({purchaser:e.target.value})}/>
@@ -1438,9 +1562,9 @@ function SalesTab({ sales, form, onChange, onAdd, onDelete, editingSale, setEdit
       </div>
 
       <div style={S.card}>
-        <div style={S.cardTitle}>Sales History ({sales.length})</div>
-        {sales.length===0 && <div style={S.empty}>No sales recorded yet.</div>}
-        {sales.map(s => editingSale===s.id ? (
+        <div style={S.cardTitle}>Sales History ({activeSales.length})</div>
+        {activeSales.length===0 && <div style={S.empty}>No sales recorded yet.</div>}
+        {activeSales.map(s => editingSale===s.id ? (
           <div key={s.id} style={S.editBox}>
             <input style={S.input} type="text" placeholder="Purchaser Name" value={editForm.purchaser} onChange={e=>setEditForm({...editForm,purchaser:e.target.value})}/>
             <input style={S.input} type="tel"  placeholder="📱 Mobile Number" value={editForm.mobile} onChange={e=>setEditForm({...editForm,mobile:e.target.value})}/>
@@ -1463,11 +1587,13 @@ function SalesTab({ sales, form, onChange, onAdd, onDelete, editingSale, setEdit
                 <div style={{fontWeight:700,fontSize:13,color:"#111827"}}>{s.purchaser||"—"}</div>
                 <div style={{fontSize:11,color:"#9ca3af"}}>{s.mobile ? `📱 ${s.mobile} • ` : ""}{s.description||"Sale"} • {s.date}</div>
                 {s.stockId && (() => { const stk=stocks.find(x=>x.id==s.stockId); const nm=s.stockName||(stk?stk.name:null); const ut=s.stockUnit||(stk?stk.unit:""); return nm?<div style={{fontSize:11,color:"#1d7e4a",fontWeight:600}}>📦 {nm} — {s.stockQty} {ut} deducted</div>:null; })()}
+                {s.hasReturn && <div style={{fontSize:11,color:"#b45309",fontWeight:600}}>↩ Returned: {s.returnQty} {s.stockUnit||""} — {s.returnReason}</div>}
               </div>
               <div style={S.rowRight}>
                 <span style={{fontWeight:700,color:"#1d7e4a"}}>+{formatCurrency(s.amount)}</span>
                 <button style={{...S.actionBtn,background:"#eff6ff",color:"#1e40af"}} onClick={()=>startEdit(s)}>✏️</button>
-                <button style={{...S.actionBtn,background:"#fee2e2",color:"#b91c1c"}} onClick={()=>onDelete(s.id)}>🗑️</button>
+                <button style={{...S.actionBtn,background:"#fff7ed",color:"#b45309",fontSize:11,padding:"4px 7px"}} onClick={()=>openReturn(s)}>↩</button>
+                <button style={{...S.actionBtn,background:"#fee2e2",color:"#b91c1c"}} onClick={()=>openDelete(s)}>🗑️</button>
               </div>
             </div>
             <span style={{fontSize:11,fontWeight:700,padding:"2px 10px",borderRadius:12,background:s.paymentStatus==="Paid"?"#dcfce7":"#fee2e2",color:s.paymentStatus==="Paid"?"#166534":"#b91c1c"}}>
@@ -1475,6 +1601,25 @@ function SalesTab({ sales, form, onChange, onAdd, onDelete, editingSale, setEdit
             </span>
           </div>
         ))}
+
+        {/* Deleted Sales Section */}
+        {deletedSales.length > 0 && (
+          <div style={{marginTop:16,borderTop:"2px dashed #e5e7eb",paddingTop:12}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#9ca3af",marginBottom:8}}>🗑️ Deleted Sales ({deletedSales.length})</div>
+            {deletedSales.map(s=>(
+              <div key={s.id} style={{...S.listRow,flexDirection:"column",alignItems:"flex-start",gap:4,opacity:0.5,background:"#f9fafb",border:"1px dashed #d1d5db"}}>
+                <div style={{display:"flex",justifyContent:"space-between",width:"100%"}}>
+                  <div>
+                    <div style={{fontWeight:600,fontSize:12,color:"#6b7280",textDecoration:"line-through"}}>{s.purchaser||"—"}</div>
+                    <div style={{fontSize:11,color:"#9ca3af"}}>{s.date} • {s.stockName||"—"} — {s.stockQty} {s.stockUnit||""}</div>
+                    <div style={{fontSize:11,color:"#b91c1c",fontWeight:600}}>Reason: {s.deleteRemark}</div>
+                  </div>
+                  <span style={{fontWeight:700,color:"#9ca3af",textDecoration:"line-through"}}>{formatCurrency(s.amount)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
